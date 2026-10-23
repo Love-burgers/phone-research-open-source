@@ -1,0 +1,8 @@
+[
+  {"text":"5000万像素主摄。拍照和续航的实测体验仍需核实，标称参数不代表实际表现。","expected":"5000万像素主摄。","notice":true},
+  {"text":"屏幕120Hz，游戏表现有待实测验证。","expected":"屏幕120Hz。","notice":true},
+  {"text":"原神最高画质连续30分钟，平均59帧。","expected":"原神最高画质连续30分钟，平均59帧。","notice":false},
+  {"text":"暂无对应实测。","expected":"暂无对应实测。","notice":false},
+  {"text":"该版本5299元，超预算299元。","expected":"该版本5299元，超预算299元。","notice":false},
+  {"text":"目前资料没有证实支持微距。","expected":"目前资料没有证实支持微距。","notice":false}
+]

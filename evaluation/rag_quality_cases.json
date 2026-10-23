@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "annotation_author": "Codex，依据随包冻结资料预先标注，未作独立人工复核",
+  "corpus": ["selection_phones.jsonl", "selection_reviews.jsonl"],
+  "scope": "标注相关来源URL及参考判断；不是全市场事实或真实回答准确率数据集",
+  "cases": [
+    {"id":"battery","category":"配置问答","phone":"Xiaomi 17T","question":"小米17T的电池容量是多少？","relevant_urls":["https://m.mi.com/commodity/detail/24814"],"reference":"冻结配置为7000mAh，不能据此推断实际续航时长。","live_review":true},
+    {"id":"charging","category":"配置问答","phone":"一加 13","question":"一加13支持多少瓦无线充电？","relevant_urls":["https://www.oneplus.com/cn/13/specs"],"reference":"50W无线充电，资料核对日2026-10-11。"},
+    {"id":"battery-paraphrase","category":"不同问法","phone":"REDMI K80","question":"这款手机电池有多大？","relevant_urls":["https://m.mi.com/commodity/detail/10050084"],"reference":"6550mAh是配置容量，不是续航实测。"},
+    {"id":"charge-paraphrase","category":"不同问法","phone":"REDMI K100 Pro","question":"充电功率是多少？","relevant_urls":["https://m.mi.com/commodity/detail/25135"],"reference":"配置为100W快充，没有充满耗时测试。"},
+    {"id":"camera-screen","category":"多项资料","phone":"Xiaomi 17T","question":"长焦倍数和屏幕尺寸分别是多少？","relevant_urls":["https://m.mi.com/commodity/detail/24814"],"reference":"5X长焦和6.59英寸，配置不是拍照体验结论。"},
+    {"id":"game-reviews","category":"多项资料","phone":"Xiaomi 17","question":"两篇历史评测的原神帧率和功耗是多少？能代表今天吗？","relevant_urls":["https://www.antutu.com/doc/135323","https://www.3elife.net/Art/test/202509/26/104460_0.html"],"reference":"安兔兔60帧/3.56W、三易生活59.84帧/3887.63mW，不能混用作者与条件，也不能保证今天。","live_review":true},
+    {"id":"k80-pro","category":"型号干扰","phone":"REDMI K80 Pro","question":"电池容量是多少？","relevant_urls":[],"reference":"缺Pro版资料，不得借用K80基础版容量。","answer_policy":"no_evidence"},
+    {"id":"xiaomi-pro","category":"型号干扰","phone":"Xiaomi 17 Pro","question":"原神平均帧率是多少？","relevant_urls":[],"reference":"缺Pro版实测，不得借用小米17基础版评测。","answer_policy":"no_evidence"},
+    {"id":"price-budget","category":"价格版本与日期","phone":"iPhone 17","question":"按档案里的256GB官网价格，预算6000元够吗？这是实时到手价吗？","relevant_urls":["https://www.apple.com.cn/shop/buy-iphone/iphone-17"],"reference":"2026-10-11记录价6799元，高于6000元；不是实时到手价，不能默认补贴。","budget":6000,"live_review":true},
+    {"id":"price-128","category":"价格版本与日期","phone":"iPhone 16","question":"128GB版本官网起价记录是多少？","relevant_urls":["https://www.apple.com.cn/shop/buy-iphone/iphone-16?step=select"],"reference":"2026-10-11官网128GB起价5999元，不是所有渠道到手价。"},
+    {"id":"night-battery-gap","category":"有配置但缺实测","phone":"Xiaomi 17T","question":"夜景效果好吗？实际续航能用多久？","relevant_urls":["https://m.mi.com/commodity/detail/24814"],"reference":"片段明确没有夜景样张及实测续航，不能根据像素或容量判断体验。","answer_policy":"qualify_missing_measurement","live_review":true},
+    {"id":"unknown-price","category":"有配置但缺实测","phone":"一加 13","question":"当前售价能确认低于4000元吗？","relevant_urls":["https://www.oneplus.com/cn/13/specs"],"reference":"资料未核对当前售价，不能确认预算条件。","answer_policy":"qualify_missing_measurement"},
+    {"id":"waterproof-gap","category":"无相关资料","phone":"REDMI K80","question":"防水等级是多少？","relevant_urls":[],"reference":"没有防水资料，检索应返回空，不推测。","answer_policy":"no_evidence"},
+    {"id":"unknown-model","category":"无相关资料","phone":"Unknown Phone","question":"续航表现怎么样？","relevant_urls":[],"reference":"没有该机型资料，返回空而不是其他手机的续航。","answer_policy":"no_evidence"}
+  ]
+}

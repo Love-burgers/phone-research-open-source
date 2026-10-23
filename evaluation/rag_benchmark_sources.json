@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "scope": "Chinese official specification snapshots, not current prices or independent reviews",
+  "sources": [
+    {"phone": "iPhone 13", "url": "https://support.apple.com/zh-cn/111872", "parser": "apple"},
+    {"phone": "iPhone 13 mini", "url": "https://support.apple.com/zh-cn/111873", "parser": "apple"},
+    {"phone": "iPhone 13 Pro", "url": "https://support.apple.com/zh-cn/111871", "parser": "apple"},
+    {"phone": "iPhone 13 Pro Max", "url": "https://support.apple.com/zh-cn/111870", "parser": "apple"},
+    {"phone": "iPhone 14", "url": "https://support.apple.com/kb/SP873?locale=zh_CN", "parser": "apple"},
+    {"phone": "iPhone 14 Plus", "url": "https://support.apple.com/kb/SP874?locale=zh_CN", "parser": "apple"},
+    {"phone": "iPhone 14 Pro", "url": "https://support.apple.com/kb/SP875?locale=zh_CN", "parser": "apple"},
+    {"phone": "iPhone 14 Pro Max", "url": "https://support.apple.com/kb/SP876?locale=zh_CN", "parser": "apple"},
+    {"phone": "iPhone 15", "url": "https://support.apple.com/zh-cn/111831", "parser": "apple"},
+    {"phone": "iPhone 15 Plus", "url": "https://support.apple.com/zh-cn/111830", "parser": "apple"},
+    {"phone": "iPhone 15 Pro", "url": "https://support.apple.com/zh-cn/111829", "parser": "apple"},
+    {"phone": "iPhone 15 Pro Max", "url": "https://support.apple.com/zh-cn/111828", "parser": "apple"},
+    {"phone": "iPhone 16", "url": "https://support.apple.com/zh-cn/121029", "parser": "apple"},
+    {"phone": "iPhone 16 Plus", "url": "https://support.apple.com/zh-cn/121030", "parser": "apple"},
+    {"phone": "iPhone 16 Pro", "url": "https://support.apple.com/zh-cn/121031", "parser": "apple"},
+    {"phone": "iPhone 16 Pro Max", "url": "https://support.apple.com/zh-cn/121032", "parser": "apple"},
+    {"phone": "一加 11", "url": "https://www.oneplus.com/cn/11/specs", "parser": "oneplus"},
+    {"phone": "一加 12", "url": "https://www.oneplus.com/cn/12/specs", "parser": "oneplus"},
+    {"phone": "一加 13", "url": "https://www.oneplus.com/cn/13/specs", "parser": "oneplus"},
+    {"phone": "一加 Ace 3", "url": "https://www.oneplus.com/cn/ace-3/specs", "parser": "oneplus"}
+  ]
+}

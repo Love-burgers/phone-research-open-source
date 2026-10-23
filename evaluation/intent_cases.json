@@ -1,0 +1,627 @@
+{
+  "annotation_author": "Codex，待独立人工复核",
+  "scope": "固定需求变更及预期状态；离线注入正确patch只验证Schema/状态接收，真实抽取需另测",
+  "cases": [
+    {
+      "id": "budget-chinese-limit",
+      "message": "别超过四千",
+      "initial": {},
+      "patch": {
+        "quote": "别超过四千",
+        "budget_max": 4000
+      },
+      "expected": {
+        "budget_max": 4000
+      },
+      "live": true
+    },
+    {
+      "id": "budget-spoken",
+      "message": "手里就三千五",
+      "initial": {},
+      "patch": {
+        "quote": "手里就三千五",
+        "budget_max": 3500
+      },
+      "expected": {
+        "budget_max": 3500
+      },
+      "live": true
+    },
+    {
+      "id": "negated-photo",
+      "message": "拍照我其实不太在意，主要打游戏",
+      "initial": {
+        "priorities": [
+          "拍照"
+        ]
+      },
+      "patch": {
+        "quote": "拍照我其实不太在意，主要打游戏",
+        "priorities": [
+          "游戏"
+        ],
+        "remove_priorities": [
+          "拍照"
+        ]
+      },
+      "expected": {
+        "priorities": [
+          "游戏"
+        ]
+      },
+      "live": true
+    },
+    {
+      "id": "exclude-apple",
+      "message": "苹果就算了",
+      "initial": {},
+      "patch": {
+        "quote": "苹果就算了",
+        "excluded_brands": [
+          "Apple"
+        ]
+      },
+      "expected": {
+        "excluded_brands": [
+          "Apple"
+        ]
+      },
+      "live": true
+    },
+    {
+      "id": "prefer-huawei",
+      "message": "一直用华为，换机也想继续用",
+      "initial": {},
+      "patch": {
+        "quote": "一直用华为，换机也想继续用",
+        "preferred_brands": [
+          "华为"
+        ]
+      },
+      "expected": {
+        "preferred_brands": [
+          "华为"
+        ]
+      },
+      "live": true
+    },
+    {
+      "id": "budget-arabic",
+      "message": "预算4000",
+      "initial": {},
+      "patch": {
+        "quote": "预算4000",
+        "budget_max": 4000
+      },
+      "expected": {
+        "budget_max": 4000
+      },
+      "live": false
+    },
+    {
+      "id": "budget-keep-priorities",
+      "message": "提高到5000",
+      "initial": {
+        "budget_max": 4000,
+        "priorities": [
+          "续航",
+          "游戏"
+        ]
+      },
+      "patch": {
+        "quote": "提高到5000",
+        "budget_max": 5000
+      },
+      "expected": {
+        "budget_max": 5000,
+        "priorities": [
+          "续航",
+          "游戏"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "budget-unlimited",
+      "message": "预算不限了",
+      "initial": {
+        "budget_max": 4000,
+        "priorities": [
+          "续航"
+        ]
+      },
+      "patch": {
+        "quote": "预算不限了",
+        "budget_unlimited": true
+      },
+      "expected": {
+        "budget_max": null,
+        "budget_unlimited": true,
+        "priorities": [
+          "续航"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "budget-restrict-again",
+      "message": "还是控制在三千",
+      "initial": {
+        "budget_unlimited": true
+      },
+      "patch": {
+        "quote": "还是控制在三千",
+        "budget_max": 3000
+      },
+      "expected": {
+        "budget_max": 3000,
+        "budget_unlimited": false
+      },
+      "live": false
+    },
+    {
+      "id": "budget-decimal",
+      "message": "最多0.45万",
+      "initial": {},
+      "patch": {
+        "quote": "最多0.45万",
+        "budget_max": 4500
+      },
+      "expected": {
+        "budget_max": 4500
+      },
+      "live": false
+    },
+    {
+      "id": "capacity-not-budget",
+      "message": "它的6000mAh电池怎么样？",
+      "initial": {
+        "budget_max": 4000,
+        "priorities": [
+          "拍照"
+        ]
+      },
+      "patch": {
+        "quote": "它的6000mAh电池怎么样？"
+      },
+      "expected": {
+        "budget_max": 4000,
+        "priorities": [
+          "拍照"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "price-question-not-budget",
+      "message": "这款售价5000元吗？",
+      "initial": {
+        "budget_max": 3000
+      },
+      "patch": {
+        "quote": "这款售价5000元吗？"
+      },
+      "expected": {
+        "budget_max": 3000
+      },
+      "live": false
+    },
+    {
+      "id": "cancel-game",
+      "message": "不玩游戏了",
+      "initial": {
+        "priorities": [
+          "游戏",
+          "拍照"
+        ]
+      },
+      "patch": {
+        "quote": "不玩游戏了",
+        "remove_priorities": [
+          "游戏"
+        ]
+      },
+      "expected": {
+        "priorities": [
+          "拍照"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "priority-mixed",
+      "message": "不在意拍照了，续航优先",
+      "initial": {
+        "priorities": [
+          "拍照",
+          "游戏"
+        ]
+      },
+      "patch": {
+        "quote": "不在意拍照了，续航优先",
+        "remove_priorities": [
+          "拍照"
+        ],
+        "priorities": [
+          "续航"
+        ],
+        "priority_action": "reorder"
+      },
+      "expected": {
+        "priorities": [
+          "续航",
+          "游戏"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "priority-reorder",
+      "message": "现在更看重续航",
+      "initial": {
+        "priorities": [
+          "拍照",
+          "续航"
+        ]
+      },
+      "patch": {
+        "quote": "现在更看重续航",
+        "priorities": [
+          "续航"
+        ],
+        "priority_action": "reorder"
+      },
+      "expected": {
+        "priorities": [
+          "续航",
+          "拍照"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "priority-clear",
+      "message": "用途条件先全部清空",
+      "initial": {
+        "priorities": [
+          "拍照",
+          "游戏"
+        ]
+      },
+      "patch": {
+        "quote": "用途条件先全部清空",
+        "clear_priorities": true
+      },
+      "expected": {
+        "priorities": []
+      },
+      "live": false
+    },
+    {
+      "id": "priority-new",
+      "message": "主要拍照和续航",
+      "initial": {},
+      "patch": {
+        "quote": "主要拍照和续航",
+        "priorities": [
+          "拍照",
+          "续航"
+        ]
+      },
+      "expected": {
+        "priorities": [
+          "拍照",
+          "续航"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "priority-question",
+      "message": "第一款拍照怎么样？",
+      "initial": {
+        "priorities": [
+          "游戏"
+        ]
+      },
+      "patch": {
+        "quote": "第一款拍照怎么样？"
+      },
+      "expected": {
+        "priorities": [
+          "游戏"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "priority-noop",
+      "message": "谢谢，暂时先这样",
+      "initial": {
+        "priorities": [
+          "游戏"
+        ],
+        "budget_max": 4000
+      },
+      "patch": {
+        "quote": "谢谢，暂时先这样"
+      },
+      "expected": {
+        "priorities": [
+          "游戏"
+        ],
+        "budget_max": 4000
+      },
+      "live": false
+    },
+    {
+      "id": "brand-prefer",
+      "message": "只考虑苹果",
+      "initial": {},
+      "patch": {
+        "quote": "只考虑苹果",
+        "preferred_brands": [
+          "Apple"
+        ]
+      },
+      "expected": {
+        "preferred_brands": [
+          "Apple"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "brand-remove",
+      "message": "不要小米品牌",
+      "initial": {
+        "preferred_brands": [
+          "小米"
+        ]
+      },
+      "patch": {
+        "quote": "不要小米品牌",
+        "excluded_brands": [
+          "小米"
+        ]
+      },
+      "expected": {
+        "preferred_brands": [],
+        "excluded_brands": [
+          "小米"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "brand-clear",
+      "message": "品牌不限",
+      "initial": {
+        "preferred_brands": [
+          "华为"
+        ],
+        "excluded_brands": [
+          "Apple"
+        ]
+      },
+      "patch": {
+        "quote": "品牌不限",
+        "clear_brand_filters": true
+      },
+      "expected": {
+        "preferred_brands": [],
+        "excluded_brands": []
+      },
+      "live": false
+    },
+    {
+      "id": "brand-restore",
+      "message": "苹果也可以考虑了",
+      "initial": {
+        "excluded_brands": [
+          "Apple",
+          "华为"
+        ]
+      },
+      "patch": {
+        "quote": "苹果也可以考虑了",
+        "restore_brands": [
+          "Apple"
+        ]
+      },
+      "expected": {
+        "excluded_brands": [
+          "华为"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "brand-switch",
+      "message": "从华为改成只考虑苹果",
+      "initial": {
+        "preferred_brands": [
+          "华为"
+        ]
+      },
+      "patch": {
+        "quote": "从华为改成只考虑苹果",
+        "preferred_brands": [
+          "Apple"
+        ]
+      },
+      "expected": {
+        "preferred_brands": [
+          "Apple"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "brand-focus-only",
+      "message": "先只看Xiaomi 17T",
+      "initial": {},
+      "patch": {
+        "quote": "先只看Xiaomi 17T",
+        "selected_phones": [
+          "Xiaomi 17T"
+        ]
+      },
+      "expected": {
+        "preferred_brands": [],
+        "focus_phone_id": "xiaomi-17t"
+      },
+      "live": false
+    },
+    {
+      "id": "phone-exclude",
+      "message": "不考虑K80了",
+      "initial": {},
+      "patch": {
+        "quote": "不考虑K80了",
+        "excluded_phones": [
+          "K80"
+        ]
+      },
+      "expected": {
+        "excluded_phones": [
+          "redmi-k80"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "phone-restore",
+      "message": "重新考虑K80",
+      "initial": {
+        "excluded_phones": [
+          "redmi-k80"
+        ]
+      },
+      "patch": {
+        "quote": "重新考虑K80",
+        "restore_phones": [
+          "K80"
+        ],
+        "selected_phones": [
+          "K80"
+        ]
+      },
+      "expected": {
+        "excluded_phones": [],
+        "focus_phone_id": "redmi-k80"
+      },
+      "live": false
+    },
+    {
+      "id": "phone-keep-exclusion",
+      "message": "主要用途改成拍照",
+      "initial": {
+        "excluded_phones": [
+          "redmi-k80"
+        ],
+        "budget_max": 4000
+      },
+      "patch": {
+        "quote": "主要用途改成拍照",
+        "priorities": [
+          "拍照"
+        ]
+      },
+      "expected": {
+        "excluded_phones": [
+          "redmi-k80"
+        ],
+        "budget_max": 4000
+      },
+      "live": false
+    },
+    {
+      "id": "phone-compare",
+      "message": "比较小米17T和K80",
+      "initial": {},
+      "patch": {
+        "quote": "比较小米17T和K80",
+        "selected_phones": [
+          "小米17T",
+          "K80"
+        ]
+      },
+      "expected": {
+        "explicit_candidate_ids": [
+          "xiaomi-17t",
+          "redmi-k80"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "phone-reselect",
+      "message": "按当前条件重新推荐",
+      "initial": {
+        "budget_max": 4000,
+        "priorities": [
+          "续航"
+        ],
+        "explicit_candidate_ids": [
+          "xiaomi-17t"
+        ]
+      },
+      "patch": {
+        "quote": "按当前条件重新推荐",
+        "reselect": true
+      },
+      "expected": {
+        "explicit_candidate_ids": []
+      },
+      "live": false
+    },
+    {
+      "id": "combined-update",
+      "message": "预算3500，不要苹果，主要游戏",
+      "initial": {},
+      "patch": {
+        "quote": "预算3500，不要苹果，主要游戏",
+        "budget_max": 3500,
+        "excluded_brands": [
+          "Apple"
+        ],
+        "priorities": [
+          "游戏"
+        ]
+      },
+      "expected": {
+        "budget_max": 3500,
+        "excluded_brands": [
+          "Apple"
+        ],
+        "priorities": [
+          "游戏"
+        ]
+      },
+      "live": false
+    },
+    {
+      "id": "unmentioned-brand",
+      "message": "预算调整为6000",
+      "initial": {
+        "budget_max": 5000,
+        "preferred_brands": [
+          "Apple"
+        ]
+      },
+      "patch": {
+        "quote": "预算调整为6000",
+        "budget_max": 6000
+      },
+      "expected": {
+        "budget_max": 6000,
+        "preferred_brands": [
+          "Apple"
+        ]
+      },
+      "live": false
+    }
+  ]
+}

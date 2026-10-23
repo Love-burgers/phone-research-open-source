@@ -1,0 +1,81 @@
+[
+  {
+    "id": "retrieval",
+    "name": "资料召回与型号隔离",
+    "expectation": "固定档案命中预期来源，保留片段和日期；相近型号不借基础版资料。",
+    "tests": [
+      "tests/test_chat_acceptance.py::test_reviewed_archive_retrieval_and_provenance",
+      "tests/test_knowledge.py::test_import_chunking_persistence_and_exact_phone_filter",
+      "tests/test_chat.py::test_exact_models_never_use_base_model_sources",
+      "tests/test_chat_agent.py::test_default_home_chat_agent_queries_one_phone_and_preserves_citations",
+      "tests/test_chat_agent_sources.py::test_agent_public_search_does_not_fetch_and_reuses_query_cache",
+      "tests/test_chat_agent_sources.py::test_agent_fetch_keeps_same_source_id_and_reuses_body_cache",
+      "tests/test_chat_agent_sources.py::test_agent_fetch_rejects_private_url_before_transport"
+    ]
+  },
+  {
+    "id": "dialogue",
+    "name": "条件更新与指代澄清",
+    "expectation": "预算修改保留用途，排除持续生效；第一款按顺序解析，不明确的它或另一款先澄清。",
+    "tests": [
+      "tests/test_chat.py::test_budget_then_use_then_followup_keeps_conditions",
+      "tests/test_chat.py::test_budget_update_and_exclusion_persist",
+      "tests/test_chat.py::test_ambiguous_pronoun_does_not_select_first_phone",
+      "tests/test_chat.py::test_other_phone_requires_unique_reference",
+      "tests/test_chat_agent.py::test_agent_decides_to_ask_budget_without_querying",
+      "tests/test_chat_agent.py::test_acknowledgement_updates_budget_and_keeps_other_conditions",
+      "tests/test_chat_agent.py::test_excluded_phone_is_not_in_next_turn_tool_scope"
+    ]
+  },
+  {
+    "id": "supplement",
+    "name": "资料缺口与按需查询",
+    "expectation": "保留固定模式回归；首页Agent自主选择本地、搜索和抓取，非法参数不执行；公网由假依赖模拟。",
+    "tests": [
+      "tests/test_open_phone_chat.py::test_single_failure_missing_phone_and_reselection",
+      "tests/test_open_phone_chat.py::test_refresh_requests_public_sources_for_bundled_phone",
+      "tests/test_chat.py::test_retrieval_failure_keeps_profile_and_does_not_invent_answer",
+      "tests/test_chat.py::test_no_evidence_no_phone_claims",
+      "tests/test_chat_agent.py::test_agent_handles_missing_local_then_searches_and_fetches_in_same_chat",
+      "tests/test_chat_agent.py::test_chat_agent_rejects_invalid_tool_request",
+      "tests/test_chat_agent.py::test_refresh_does_not_treat_previous_sources_as_fresh"
+    ]
+  },
+  {
+    "id": "model",
+    "name": "引用校验与模型容错",
+    "expectation": "SDK请求格式正确，空或跨机型引用不能成为有效回答；模拟模型失败时保留条件与来源。",
+    "tests": [
+      "tests/test_chat.py::test_actual_langchain_sdk_chat_intent_and_grounded_answer",
+      "tests/test_chat.py::test_cross_phone_model_citation_rejected_not_displayed",
+      "tests/test_chat.py::test_model_failure_preserves_confirmed_state_and_returns_sources",
+      "tests/test_open_phone_chat.py::test_dynamic_model_mapping_and_mandatory_citations",
+      "tests/test_chat_agent.py::test_tool_limit_still_keeps_collected_sources",
+      "tests/test_chat_agent.py::test_mid_loop_model_failure_keeps_sources_and_conditions",
+      "tests/test_chat_agent.py::test_chat_agent_rejects_cross_phone_answer_citation"
+    ]
+  },
+  {
+    "id": "persistence",
+    "name": "会话持久化与并发隔离",
+    "expectation": "重建服务后从SQLite恢复条件与历史；新会话独立；同一revision并发写入只能一个成功。",
+    "tests": [
+      "tests/test_chat.py::test_durable_restore_and_session_isolation",
+      "tests/test_chat.py::test_concurrent_save_cannot_overwrite_another_turn",
+      "tests/test_open_phone_chat.py::test_restore_aliases_urls_dates_and_isolation",
+      "tests/test_chat_agent.py::test_followup_reuses_sources_and_restores_trace_from_sqlite",
+      "tests/test_chat_agent.py::test_new_session_does_not_inherit_agent_sources"
+    ]
+  },
+  {
+    "id": "http",
+    "name": "接口连续流程与故障恢复",
+    "expectation": "HTTP多轮更新、引用展示、冷恢复与删除贯通；409/503不泄漏内部错误、不改变已保存状态，恢复后能继续。",
+    "tests": [
+      "tests/test_chat_acceptance.py::test_http_multiturn_cold_restore_and_independent_session",
+      "tests/test_chat_acceptance.py::test_http_failed_turn_preserves_saved_state_and_can_continue",
+      "tests/test_chat.py::test_http_create_send_restore_delete_and_missing_session",
+      "tests/test_chat_agent.py::test_home_http_endpoint_returns_agent_trace_and_restores_it"
+    ]
+  }
+]

@@ -1,0 +1,8 @@
+[
+  {"phone":"Phone A","need":"续航","expected_urls":["https://example.com/phone-a/battery"]},
+  {"phone":"Phone B","need":"拍照","expected_urls":["https://example.com/phone-b/camera"]},
+  {"phone":"Phone A","need":"夜景相机","expected_urls":["https://example.com/phone-a/camera"]},
+  {"phone":"Phone B","need":"电池和影像","expected_urls":["https://example.com/phone-b/battery","https://example.com/phone-b/camera"]},
+  {"phone":"Phone A Pro","need":"续航","expected_urls":[]},
+  {"phone":"Phone A","need":"防水等级","expected_urls":[]}
+]

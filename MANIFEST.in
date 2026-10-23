@@ -1,0 +1,19 @@
+include LICENSE README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md
+include .env.example requirements.txt constraints.txt Dockerfile .dockerignore .gitignore
+include .github/workflows/tests.yml
+include evaluation/__init__.py evaluation/README.md
+include evaluation/chat_acceptance_cases.json evaluation/general_chat_cases.json evaluation/intent_cases.json
+include evaluation/knowledge_cases.json evaluation/rag_benchmark_cases.json evaluation/rag_benchmark_sources.json
+include evaluation/rag_quality_cases.json evaluation/retrieval_cases.json
+recursive-include scripts *.py
+recursive-include tests *.py *.cjs
+include tests/fixtures/presentation_copy_cases.json
+exclude tests/test_acceptance_blockers.py tests/test_evidence_roles.py tests/test_expanded_chat_context.py
+exclude tests/test_quota_failure_replay.py tests/test_saved_answer_context.py tests/test_search_transport_repair.py
+exclude tests/test_sogou_search.py tests/test_supplement_context.py tests/test_user_game_context.py
+include docs/AGENT.md docs/ARCHITECTURE.md docs/CHAT.md docs/EMBEDDING.md docs/RAG.md docs/PROJECT_SPLIT.md
+include docs/api-key-setup.png
+recursive-include app/knowledge_samples *.jsonl *.json
+exclude AGENTS.md .env
+prune learning
+prune runs

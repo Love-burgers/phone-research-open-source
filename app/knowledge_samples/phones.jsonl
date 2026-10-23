@@ -1,0 +1,4 @@
+{"phone_name":"Phone A","title":"Phone A 虚构续航测试","source_url":"https://example.com/phone-a/battery","text":"这是虚构的教学资料，不能用于真实选购。Phone A 在同一测试条件下连续播放视频 10 小时，续航与电池测试需要结合亮度、网络和应用负载核对。"}
+{"phone_name":"Phone A","title":"Phone A 虚构影像评测","source_url":"https://example.com/phone-a/camera","text":"这是虚构的教学资料，不能用于真实选购。Phone A 的拍照测试覆盖白天与夜景；相机在白天细节较清楚，夜景有噪点，影像结论只适用于这组虚构样张。"}
+{"phone_name":"Phone B","title":"Phone B 虚构续航测试","source_url":"https://example.com/phone-b/battery","text":"这是虚构的教学资料，不能用于真实选购。Phone B 在与 Phone A 相同的条件下连续播放视频 12 小时，这组续航、电池结果只用于验证检索流程。"}
+{"phone_name":"Phone B","title":"Phone B 虚构影像评测","source_url":"https://example.com/phone-b/camera","text":"这是虚构的教学资料，不能用于真实选购。Phone B 的拍照测试包含运动与夜景样张，相机对运动对象的对焦偶有延迟，夜景影像的亮度较高。"}

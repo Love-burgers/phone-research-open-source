@@ -1,0 +1,7 @@
+[
+  {"id":"xiaomi-17t","name":"Xiaomi 17T","aliases":["小米17T","小米 17T","Xiaomi17T","Xiaomi 17T"],"brand":"小米","price":3499,"variant":"12GB+256GB","price_url":"https://m.mi.com/commodity/detail/24814","checked_on":"2026-10-11","topics":["拍照","续航","屏幕"],"note":"公开商品页检索结果中的展示价；下单前核对地区、库存、版本和优惠。"},
+  {"id":"redmi-k100-pro","name":"REDMI K100 Pro","aliases":["红米K100 Pro","红米K100Pro","K100 Pro","K100Pro","REDMI K100 Pro"],"brand":"REDMI","price":3999,"variant":"12GB+256GB","price_url":"https://m.mi.com/commodity/detail/25135","checked_on":"2026-10-11","topics":["续航","游戏","屏幕"],"note":"公开商品页检索结果中的展示价，结果抓取早于核对日期；下单前核对最新价格与库存。"},
+  {"id":"redmi-k80","name":"REDMI K80","aliases":["红米K80","红米 K80","REDMI K80","K80"],"brand":"REDMI","price":1999,"variant":"12GB+256GB","price_url":"https://m.mi.com/commodity/detail/10050084","checked_on":"2026-10-11","topics":["续航","游戏","屏幕"],"note":"公开商品页检索结果中的展示价，所选北京地区显示暂时缺货；可购买性及价格需重新核对。"},
+  {"id":"iphone-16","name":"iPhone 16","aliases":["iPhone16","iPhone 16","苹果16","苹果 16"],"brand":"Apple","price":5999,"variant":"128GB","price_url":"https://www.apple.com.cn/shop/buy-iphone/iphone-16?step=select","checked_on":"2026-10-11","topics":["拍照","轻便"],"note":"Apple中国大陆商品页起价；配置、渠道、优惠及实际到手价需下单前核对。"},
+  {"id":"oneplus-13","name":"一加 13","aliases":["一加13","一加 13","OnePlus13","OnePlus 13"],"brand":"一加","price":null,"variant":"配置与价格待确认","price_url":"https://www.oneplus.com/cn/13/specs","checked_on":"2026-10-11","topics":["续航","屏幕"],"note":"仅核对官方规格页，没有核对当前售价；不会自动当成预算内候选。"}
+]

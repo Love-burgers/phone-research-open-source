@@ -1,0 +1,60 @@
+{
+  "source": "助手新增的代表场景，非用户原题；真实结果不得冒充人工评分",
+  "cases": [
+    {
+      "id": "mixed-photo",
+      "messages": [
+        "预算3500，主要拍孩子和日常记录，也看重续航。希望重量不超过190克，推荐两款。",
+        "重量限制取消，拍照保留，续航不用优先了。预算提高到5000，重新推荐一款。",
+        "不是要花满5000，只要不超过就行。它的夜景拍人怎么样？"
+      ],
+      "explicit_requirements": {
+        "budget_by_turn": [
+          3500,
+          5000,
+          5000
+        ],
+        "photo_retained": true,
+        "battery_removed_turn_2": true,
+        "weight_removed_turn_2": true,
+        "count_by_turn": [
+          2,
+          1,
+          1
+        ]
+      },
+      "review_status": "pending"
+    },
+    {
+      "id": "photo-alternatives",
+      "messages": [
+        "预算5000左右，拍照好、续航好的手机，给我推荐一下。",
+        "还有别的推荐吗"
+      ],
+      "explicit_requirements": {
+        "default_count": 3,
+        "budget_preserved": 5000,
+        "priorities": [
+          "拍照",
+          "续航"
+        ],
+        "other_choices_turn_2": true
+      },
+      "review_status": "pending"
+    },
+    {
+      "id": "photo-simple",
+      "messages": [
+        "想要预算5000拍照好的手机",
+        "还有别的推荐码"
+      ],
+      "explicit_requirements": {
+        "default_count": 3,
+        "budget_preserved": 5000,
+        "photo_retained": true,
+        "other_choices_turn_2": true
+      },
+      "review_status": "pending"
+    }
+  ]
+}

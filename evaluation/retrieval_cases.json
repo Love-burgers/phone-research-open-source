@@ -1,0 +1,38 @@
+[
+  {
+    "id": "camera_focus",
+    "need": "重视拍照",
+    "phone_name": "Phone A",
+    "sources": [
+      {"url": "https://example.com/camera/1", "title": "Phone A 处理器介绍", "snippet": "Phone A 的处理器配置与游戏性能资料。", "relevant": false},
+      {"url": "https://example.com/camera/2", "title": "Phone A 系统介绍", "snippet": "Phone A 的系统界面和软件功能资料。", "relevant": false},
+      {"url": "https://example.com/camera/3", "title": "Phone A 续航记录", "snippet": "Phone A 的电池和充电测试资料。", "relevant": false},
+      {"url": "https://example.com/camera/4", "title": "Phone A 拍照样张", "snippet": "Phone A 的拍照样张和夜景细节资料。", "relevant": true},
+      {"url": "https://example.com/camera/5", "title": "Phone A 相机评测", "snippet": "Phone A 的相机表现和照片色彩资料。", "relevant": true},
+      {"url": "https://example.com/camera/6", "title": "Phone A 影像规格", "snippet": "Phone A 的影像硬件和录像功能资料。", "relevant": true}
+    ]
+  },
+  {
+    "id": "battery_focus",
+    "need": "最看重续航",
+    "phone_name": "Phone B",
+    "sources": [
+      {"url": "https://example.com/battery/1", "title": "Phone B 屏幕参数", "snippet": "Phone B 的屏幕尺寸与亮度资料。", "relevant": false},
+      {"url": "https://example.com/battery/2", "title": "Phone B 拍照评测", "snippet": "Phone B 的夜景拍照样张资料。", "relevant": false},
+      {"url": "https://example.com/battery/3", "title": "Phone B 外观介绍", "snippet": "Phone B 的机身配色与材质资料。", "relevant": false},
+      {"url": "https://example.com/battery/4", "title": "Phone B 续航实测", "snippet": "Phone B 的连续使用续航测试资料。", "relevant": true},
+      {"url": "https://example.com/battery/5", "title": "Phone B 电池参数", "snippet": "Phone B 的电池容量与待机资料。", "relevant": true},
+      {"url": "https://example.com/battery/6", "title": "Phone B 续航评测", "snippet": "Phone B 的续航表现和充电测试资料。", "relevant": true}
+    ]
+  },
+  {
+    "id": "unmapped_need",
+    "need": "适合单手使用",
+    "phone_name": "Phone C",
+    "sources": [
+      {"url": "https://example.com/hand/1", "title": "Phone C 资料一", "snippet": "Phone C 的屏幕与机身基本信息。", "relevant": false},
+      {"url": "https://example.com/hand/2", "title": "Phone C 资料二", "snippet": "Phone C 的重量和尺寸基本信息。", "relevant": true},
+      {"url": "https://example.com/hand/3", "title": "Phone C 资料三", "snippet": "Phone C 的相机与性能基本信息。", "relevant": false}
+    ]
+  }
+]

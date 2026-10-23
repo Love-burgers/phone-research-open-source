@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>选机助手 · 把需求聊清楚</title>
+  <style>
+    :root{color-scheme:light;--ink:#162b39;--muted:#657481;--line:#e0e7ec;--green:#156e61;--bg:#f3f6f7}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.7 "Microsoft YaHei",sans-serif}
+    button,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:wait;opacity:.5}a{color:var(--green)}
+    header{padding:18px 32px;background:white;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:16px}
+    .brand{font-size:22px;font-weight:700}.sub{color:var(--muted);font-size:13px}.nav{display:flex;gap:18px;align-items:center}.nav a{font-size:13px;text-decoration:none}
+    .outline{border:1px solid #b9d0ca;background:white;color:var(--green);padding:7px 15px;border-radius:8px}
+    .layout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:24px;max-width:1240px;margin:24px auto;padding:0 24px;height:calc(100dvh - 130px);min-height:500px}
+    .chat{display:flex;flex-direction:column;min-height:0;background:white;border:1px solid var(--line);border-radius:16px;overflow:hidden}
+    .mode{padding:10px 20px;background:#edf5f2;color:#3c6358;font-size:12px;border-bottom:1px solid #dce9e3}.mode[hidden]{display:none}
+    .search-options{display:flex;align-items:center;gap:10px;margin-top:10px;font-size:12px;color:var(--muted)}.search-toggle{border:1px solid #b9d0ca;border-radius:18px;background:white;color:var(--green);padding:5px 12px}.search-toggle[aria-pressed="true"]{background:#e5f2ed;border-color:var(--green)}
+    #messages{overflow:auto;flex:1;padding:24px}.welcome{max-width:560px;margin:35px auto}.eyebrow{letter-spacing:2px;color:var(--green);font-size:12px}h1{font-size:30px;line-height:1.5;margin:12px 0}
+    .welcome p{color:var(--muted)}.quick{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.chip{border:1px solid #d7e5df;border-radius:20px;background:#f8fbf9;color:#3a6257;padding:5px 12px;font-size:12px}
+    .message{margin-bottom:24px}.label{font-size:12px;color:var(--muted);margin-bottom:5px}.bubble{white-space:pre-wrap;border-radius:12px;padding:15px 18px;background:#f4f7f8;overflow-wrap:anywhere}.user{margin-left:18%;}.user .bubble{background:#e5f2ed}.user .label{text-align:right}.assistant .bubble{background:#f7f9fa;border:1px solid #edf0f2}
+    .fact{padding-top:10px;margin-top:10px;border-top:1px solid #dfe7e9;font-size:13px}.fact strong{display:block;color:var(--green)}.refs{font-size:12px;margin-top:4px}.refs a{margin-right:10px}
+    details{font-size:12px;margin-top:12px;color:var(--muted)}summary{cursor:pointer}.source{border-left:2px solid #bbd2c9;padding-left:10px;margin:12px 0}.source p{margin:3px 0}.mode-tag{font-size:11px;color:var(--muted);margin-top:8px}
+    form{padding:16px 20px;border-top:1px solid var(--line);background:white}.input-row{display:flex;gap:10px;align-items:flex-end}textarea{width:100%;resize:none;height:80px;border:1px solid #ccdadf;border-radius:10px;padding:12px;color:var(--ink);outline:none}textarea:focus{border-color:var(--green)}.send{border:0;border-radius:9px;background:var(--green);color:white;padding:12px 18px;white-space:nowrap}.hint{font-size:11px;color:var(--muted);margin-top:7px}#error{color:#a33830;font-size:13px;margin-top:7px}
+    aside{overflow:auto}.panel{background:white;border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}h2{font-size:16px;margin:0 0 13px}.profile-row{display:flex;justify-content:space-between;gap:12px;padding:6px 0;font-size:13px}.profile-row span:first-child{color:var(--muted)}.profile-row span:last-child{text-align:right}#candidates .card{border-top:1px solid var(--line);padding:14px 0}.card:first-child{border-top:0!important;padding-top:0!important}.card strong{font-size:15px}.price{color:var(--green);font-weight:700}.card p{font-size:12px;margin:5px 0;color:var(--muted)}.card a{font-size:12px}.card button{margin-top:7px}.small{font-size:12px;color:var(--muted)}.delete{background:none;border:0;color:#75818a;text-decoration:underline;font-size:12px;margin-top:14px}
+    dialog{border:1px solid var(--line);border-radius:16px;max-width:480px;width:calc(100% - 32px);padding:24px;color:var(--ink);box-shadow:0 16px 60px #162b3926}dialog::backdrop{background:#162b3966}dialog form{padding:0;border:0}dialog input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #ccdadf;border-radius:9px;font:inherit;margin:8px 0 14px}dialog .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}#modelKeyError{color:#a33830;font-size:13px}#modelKeyStatus{font-size:12px;color:var(--muted)}
+    @media(max-width:900px){header{padding:14px 18px}.sub{display:none}.layout{grid-template-columns:1fr;height:auto;padding:0 12px;margin:12px auto;gap:12px}.chat{height:75dvh;min-height:480px}aside{display:grid;grid-template-columns:1fr 1fr;gap:12px;overflow:visible}.panel{margin-bottom:0}.panel:last-child{grid-column:1/-1}.nav a{display:none}#messages{padding:16px}h1{font-size:25px}}
+    @media(max-width:520px){aside{grid-template-columns:1fr}.panel:last-child{grid-column:auto}.user{margin-left:8%}header .brand{font-size:19px}.chat{height:78dvh}form{padding:12px}.send{padding:10px 13px}.layout{min-height:0}}
+  </style>
+</head>
+<body>
+  <header><div><div class="brand">选机助手</div><div class="sub">聊清楚需求，再做购买决定</div></div><div class="nav"><button id="modelSettings" class="outline">API Key设置</button><button id="newChat" class="outline">新对话</button></div></header>
+  <dialog id="modelKeyDialog" aria-labelledby="modelKeyTitle">
+    <form id="modelKeyForm" method="dialog">
+      <h2 id="modelKeyTitle">使用你自己的 API Key</h2>
+      <p class="small" id="modelDestination">正在读取模型配置…</p>
+      <label for="modelApiKey">模型 API Key</label>
+      <input id="modelApiKey" type="password" autocomplete="off" spellcheck="false" maxlength="2048" placeholder="输入当前供应商的 API Key">
+      <div class="small">密钥通过当前项目后端用于模型请求，不写入聊天记录、配置文件或浏览器存储。仅当前标签页内存保留，刷新后需重新输入。</div>
+      <p id="modelKeyStatus" aria-live="polite"></p><div id="modelKeyError" role="alert"></div>
+      <div class="actions"><button class="send" type="submit">使用此 Key</button><button id="skipModelKey" class="outline" type="button">暂不设置</button><button id="clearModelKey" class="outline" type="button">清除本页 Key</button></div>
+    </form>
+  </dialog>
+  <main class="layout">
+    <section class="chat" aria-label="选机对话">
+      <div class="mode" id="mode" hidden>正在连接选机助手…</div>
+      <div id="accessPanel" hidden><label>访问密钥 <input id="accessToken" type="password" autocomplete="off"></label><button id="accessLogin" type="button">连接</button><span class="small">仅保留在本次标签页，关闭后清除。</span></div>
+      <div id="messages" aria-live="polite"></div>
+      <form id="chatForm"><div class="input-row"><textarea id="message" aria-label="你的选机需求" placeholder="例如：预算4000，主要拍照，也希望续航好" maxlength="1500" required></textarea><button class="send" id="send">发送</button></div><div class="search-options"><button type="button" class="search-toggle" id="webSearch" aria-pressed="false" title="开启后本轮查询公开资料；关闭只使用本地及已有资料">联网搜索：关</button><span id="searchHint">使用本地及已有资料</span></div><div class="hint">Enter 发送 · Shift + Enter 换行 · 当前浏览器会恢复上一次对话</div><div id="error" role="alert"></div></form>
+    </section>
+    <aside>
+      <section class="panel"><h2>已记住的需求</h2><div id="profile"></div><div class="small">可以在对话里修改，未改的条件会保留。</div></section>
+      <section class="panel"><h2>当前候选</h2><div id="candidates" class="small">先告诉我预算和用途。</div></section>
+      <section class="panel"><h2>资料范围</h2><div class="small">可按预算价位和用途寻找新机型，也能输入完整型号继续追问。候选会随条件重新核对；待核价的机型会明确标注。<br>回答标明正文、搜索摘要或本地资料来源与核对日期；版本、价格和实际体验按证据说明，缺资料时会告诉你。</div><button id="deleteChat" class="delete">删除当前对话记录</button></section>
+    </aside>
+  </main>
+  <script>
+    function safeUrl(value) {
+      try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : null; }
+      catch { return null; }
+    }
+    function chatApiError(body, status) {
+      if (status >= 500) return '服务暂不可用，请稍后重试。';
+      if (typeof body?.detail === 'string') return body.detail;
+      if (status === 422) return '消息或对话编号无效，请检查输入后重试。';
+      return '请求没有完成，请重试。';
+    }
+    let modelApiKey = '';
+    function setModelApiKey(value) {
+      const key=value.trim();
+      if(!/^[\x21-\x7e]{12,2048}$/.test(key)) throw new Error('API Key格式无效，请检查后重试。');
+      modelApiKey=key;
+    }
+    function clearModelApiKey() {modelApiKey='';}
+    function hasModelApiKey() {return Boolean(modelApiKey);}
+    async function chatRequest(url, options = {}) {
+      let response;
+      const headers = {...options.headers};
+      if(modelApiKey && url==='/api/chat') headers['X-Model-API-Key']=modelApiKey;
+      try { const token=sessionStorage.getItem('phone-selection-access');if(token && url.startsWith('/api/')) headers.Authorization='Bearer '+token; } catch {}
+      try { response = await fetch(url, {...options,headers}); } catch { throw new Error('无法连接服务，请检查连接后重试。'); }
+      if (response.status === 204) return null;
+      let body;
+      try { body = await response.json(); } catch { throw new Error('服务返回格式异常，请稍后重试。'); }
+      if (!response.ok) throw new Error(chatApiError(body, response.status));
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('服务返回格式异常，请稍后重试。');
+      return body;
+    }
+    function evidenceMode(actualMode, trace) {
+      const actions = trace?.actions || [];
+      if (actualMode === '资料模式（模型暂不可用）' && actions.some(a => a.action === 'report' && a.status === 'skipped') && !actions.some(a => ['decision','report'].includes(a.action) && a.status === 'error')) return '资料模式';
+      return actualMode;
+    }
+    function chatModeText(health, actualMode, trace) {
+      actualMode = evidenceMode(actualMode, trace);
+      if (trace?.engine === 'langgraph-chat-agent' && trace.metrics?.network_calls != null) {
+        const m = trace.metrics;
+        const lookup = m.network_calls ? `本轮联网查询${m.network_calls}次` : m.cache_hits ? '本轮复用查询缓存' : m.knowledge_calls ? '本轮使用本地资料' : '本轮未联网';
+        const status = actualMode === '资料模式（回答未通过核对）' ? '回答依据待核实' : actualMode === '资料模式（模型暂不可用）' ? '模型暂不可用，按资料回答' : actualMode === '资料模式' ? '资料参考' : '选机助手';
+        return `${status} · ${lookup}`;
+      }
+      if (actualMode === '资料模式' && trace?.engine === 'langgraph-chat-agent') return 'AI Agent · 本轮资料仍待核对';
+      if (actualMode === 'AI对话' && trace?.engine === 'langgraph-chat-agent') return 'AI Agent · 记住条件，按需查询资料';
+      if (actualMode === 'AI对话') return 'AI对话 · 回答附资料来源，购买前仍需核对';
+      if (actualMode === '资料模式（模型暂不可用）') return '资料模式（模型暂不可用） · 本轮按资料摘录回答';
+      if (actualMode === '资料模式（回答未通过核对）') return '资料模式（回答未通过核对） · 已保留来源与失败记录';
+      if (actualMode === '资料模式') return '资料模式 · 本轮按资料或已确认条件回答';
+      if (health) return health.model_configured ? (health.chat_agent_enabled ? 'AI Agent · 记住条件，按需查询资料' : 'AI对话 · 回答附资料来源，购买前仍需核对') : '资料模式 · 支持条件更新与公开资料查询';
+      return '正在连接选机助手…';
+    }
+    function sourceTypeText(source) {
+      const type = {knowledge:'本地知识库',page:'已抓取正文',snippet:'搜索摘要 · 正文未核对'}[source.source_type] || '本地知识库';
+      const kind = {review:'实测评测',price:'价格记录',spec:'配置资料'}[source.evidence_kind];
+      const published = source.published_on ? `${source.published_on}发布` : null;
+      return [type,kind,published,`${source.checked_on}核对`,source.market || '地区未确认'].filter(Boolean).join(' · ');
+    }
+    function testGapCopy(text, enabled) {
+      if (!enabled) return {text,notices:[]};
+      const gap=new RegExp([
+        '(?:实测|测试)(?:资料|记录|数据|结果)?[^，。；,;]{0,8}(?:待补|待查|待核|不足|缺失|未核|没有)',
+        '(?:待补|待查|待核|暂无|尚无|缺少|还缺|没有|未查到|未找到|尚未)[^，。；,;]{0,16}(?:实测|测试)',
+        '(?:游戏|续航|拍照)表现[^，。；,;]{0,8}(?:待核|待补|待查)',
+        '(?:待|有待|需|需要|尚待|仍需)[^，。；,;]{0,6}(?:实测|测试)(?:核对|验证)?',
+        '(?:实测|测试)[^，。；,;]{0,16}(?:待|仍需|尚需|需要|需)[^，。；,;]{0,4}(?:核实|核对|验证|确认)',
+        '(?:参数|配置|标称数据)[^，。；,;]{0,12}(?:不代表|不等于|不能证明)[^，。；,;]{0,12}(?:实际|体验|表现)',
+        '不能据此下体验结论',
+      ].join('|'));
+      const fact=/\d+(?:\.\d+)?\s*(?:mAh|W|Hz|GB|TB|万|亿|元|帧|fps|小时|分钟)|骁龙\s*\d|天玑\s*\d|\bA\d{2}/i;
+      const kept=[],notices=[];
+      for (const part of text.match(/[^，。；,;]+[，。；,;]?/g)||[text]) {
+        if(gap.test(part)) {
+          const offset=part.search(/但是|但|不过|只是|然而/);
+          if(offset>0 && fact.test(part.slice(0,offset)) && gap.test(part.slice(offset)) && !fact.test(part.slice(offset))) {
+            kept.push(part.slice(0,offset));notices.push(part.slice(offset));continue;
+          }
+          if(!fact.test(part)){notices.push(part);continue;}
+        }
+        kept.push(part);
+      }
+      const result=kept.join('').trim().replace(/[，,；;]+$/,'。');
+      return result ? {text:result,notices} : {text,notices:[]};
+    }
+    function pendingMatch(text) {return /待补实测|待查|待核对/.test(text) && !/冲突|不符合/.test(text);}
+    function recommendationCopy(text, enabled) {
+      if (!enabled) return {text, notices:[]};
+      const measured=testGapCopy(text,true);text=measured.text;
+      const kept = [], notices = [...measured.notices];
+      for (const part of text.match(/[^。；;]+[。；;]?/g) || [text]) {
+        const value = part.trim();
+        const price = /版本价|价格|售价|报价|官网价|预算/.test(value);
+        const missing = /未|没|暂无|未知|缺|待|不确定|不明确|尚不|需.{0,8}(?:确认|核对)/.test(value);
+        const startsNotice = /^(?:(?:本轮|当前|目前|具体|对应|这款|这个|现有|仍|尚|暂|还|该|其)\s*)*(?:版本|价格|售价|报价|官网|未|没|无|缺|能否|是否|预算)/.test(value);
+        const material = /超出|超过|超预算|高于预算|低于目标价位|冲突|地区|港版|海外|国行|版本不一致|来源不一致/.test(value);
+        const fact = /(?:标价|售价|参考价|报价|价格)[^。；;，,]{0,18}\d{3,5}\s*元|\d+(?:\.\d+)?\s*(?:mAh|W|Hz|万像素|亿像素|GB|TB)/i.test(value);
+        (price && missing && startsNotice && !material && !fact ? notices : kept).push(part);
+      }
+      // A direct price answer or an empty result must never become a blank card.
+      if (!kept.join('').trim()) return {text, notices:[]};
+      return {text:kept.join('').trim().replace(/[；;]\s*$/,'。'), notices:notices.map(s=>s.trim())};
+    }
+    function evidenceGroups(message) {
+      const used = new Set((message.blocks || []).flatMap(block=>block.evidence_ids || []));
+      const groups = new Map(), other = [];
+      for (const source of message.sources || []) {
+        if (!used.has(source.id)) {other.push(source);continue;}
+        if (!groups.has(source.url)) groups.set(source.url,{url:source.url,sources:[]});
+        groups.get(source.url).sources.push(source);
+      }
+      return {cited:[...groups.values()],other};
+    }
+    function chatPayload(message, sessionId, webEnabled) {
+      return {message,session_id:sessionId || null,search_mode:webEnabled ? 'web' : 'local'};
+    }
+    // UI starts here. Text is always rendered with textContent, including model output.
+    const $ = selector => document.querySelector(selector);
+    let session = null, busy = false, latestHealth = null;
+    let webEnabled = false;
+    try {webEnabled = localStorage.getItem('phone-selection-web-search') === 'web';} catch {}
+    function updateSearchOption() {
+      $('#webSearch').setAttribute('aria-pressed',String(webEnabled));
+      $('#webSearch').textContent = `联网搜索：${webEnabled ? '开' : '关'}`;
+      $('#searchHint').textContent = webEnabled ? '本轮查询公开资料' : '使用本地及已有资料';
+    }
+    $('#webSearch').addEventListener('click',()=>{if(busy)return;webEnabled=!webEnabled;try{localStorage.setItem('phone-selection-web-search',webEnabled?'web':'local');}catch{}updateSearchOption();});
+    updateSearchOption();
+    function updateMode() {
+      const latest = [...(session?.messages || [])].reverse().find(m => m.role === 'assistant');
+      $('#mode').textContent = chatModeText(latestHealth ? {...latestHealth,model_configured:latestHealth.model_configured || hasModelApiKey()} : null, latest?.mode, latest?.agent_trace);
+      $('#mode').hidden = true;
+      $('#modelSettings').textContent=hasModelApiKey() ? 'API Key已设置' : 'API Key设置';
+    }
+    async function refreshHealth() {
+      try {latestHealth = await chatRequest('/api/health', {cache:'no-store'});updateMode();}
+      catch {if (!session?.messages?.length) $('#mode').textContent = '服务暂未连接';}
+    }
+    function el(tag, text, cls) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (cls) node.className = cls; return node; }
+    function link(text, url) { const node = el('a', text), checked = safeUrl(url); if (checked) {node.href = checked;node.target = '_blank';node.rel = 'noopener noreferrer';} return node; }
+    function readStoredId() { try {return new URL(location.href).searchParams.get('session') || localStorage.getItem('phone-selection-session');} catch {return null;} }
+    function remember(id) { try { if (id) localStorage.setItem('phone-selection-session', id); else localStorage.removeItem('phone-selection-session'); } catch {} }
+    function setBusy(value) {busy = value;for (const selector of ['#send','#newChat','#deleteChat','#webSearch','#modelSettings']) $(selector).disabled = value; $('#send').textContent = value ? '回答中…' : '发送';}
+    function quickButton(text) {const button = el('button', text, 'chip');button.type = 'button';button.addEventListener('click', () => {if (!busy) {$('#message').value = text;$('#message').focus();}});return button;}
+    function render() {
+      updateMode();
+      const profile = session?.profile || {}, messages = session?.messages || [];
+      $('#profile').replaceChildren();
+      const names = new Map(messages.flatMap(message => (message.cards || []).map(card => [card.id,card.name])));
+      const rows = [['预算',profile.budget_unlimited ? '不限' : profile.budget_max ? (profile.price_preference === 'near_budget' ? `重点看 ${Math.floor(profile.budget_max*.8)}–${profile.budget_max}元` : `≤ ${profile.budget_max}元`) : '待确认'],['用途',(profile.priorities || []).join('、') || '待确认'],['具体要求',(profile.requirements || []).join('；') || '未限定'],['游戏',(profile.games || []).join('、') || '未指定'],['屏幕要求',profile.high_refresh_required ? '高刷新率' : '未限定'],['品牌',(profile.preferred_brands || []).join('、') || '不限'],['排除品牌',(profile.excluded_brands || []).join('、') || '无'],['排除机型',(profile.excluded_phones || []).map(id => names.get(id) || id).join('、') || '无']];
+      for (const [name,value] of rows) {if (!['预算','用途'].includes(name) && ['未限定','未指定','不限','无'].includes(value)) continue;const row = el('div',undefined,'profile-row');row.append(el('span',name),el('span',value));$('#profile').append(row);}
+      const latest = [...messages].reverse().find(m => m.role === 'assistant');
+      const cards = (latest?.cards || []).filter(card => (profile.candidate_ids || []).includes(card.id));
+      $('#candidates').replaceChildren();
+      if (!cards.length) $('#candidates').append(el('p',profile.budget_max ? '尚无已核对的候选，已保留你的选机条件。' : '告诉我预算和用途，或指定想了解的机型。'));
+      for (const [index,card] of cards.entries()) {
+        const node = el('div',undefined,'card');node.append(el('strong',`${index+1}. ${card.name}`),el('div',card.price ? `参考价 ¥${card.price}` : '待核价候选','price'));
+        const hasConfiguration = card.reason?.startsWith('配置：');
+        if (hasConfiguration || !card.matches?.length) node.append(el('p',card.reason));
+        for (const match of card.matches || []) if (!pendingMatch(match)) node.append(el('p',match,'match'));
+        const metadata = el('details');metadata.append(el('summary','版本、来源与注意事项'),el('p',card.variant),el('p',card.note));
+        for (const match of card.matches || []) if (pendingMatch(match)) metadata.append(el('p',match));
+        if (card.price && profile.budget_max && card.price < profile.budget_max * .8 && profile.price_preference !== 'save_money') node.append(el('p','省钱备选'));
+        if (safeUrl(card.price_url)) metadata.append(link(`价格来源 · ${card.checked_on}核对`,card.price_url),el('br'));
+        for (const [i,url] of (card.match_sources || []).entries()) if (safeUrl(url)) metadata.append(link(`匹配依据${i+1}`,url),el('br'));
+        node.append(metadata);
+        node.append(quickButton(`想了解${card.name}`));$('#candidates').append(node);
+      }
+      $('#messages').replaceChildren();
+      if (!messages.length) {
+        const welcome = el('div',undefined,'welcome');welcome.append(el('div','从你的实际需求开始','eyebrow'),el('h1','预算、用途、纠结的机型，\n都可以直接聊。'),el('p','我会记住你的条件，帮你缩小范围。想换预算、排除一款，或继续问拍照和续航，都可以接着说。'));
+        const quick = el('div',undefined,'quick');['预算4000，主要拍照和续航','预算3000，主要玩游戏','想了解一加13'].forEach(text => quick.append(quickButton(text)));welcome.append(quick);$('#messages').append(welcome);
+      }
+      for (const message of messages) {
+        const node = el('article',undefined,`message ${message.role}`);node.append(el('div',message.role === 'user' ? '你' : '选机助手','label'));
+        const bubble = el('div',message.content,'bubble');
+        const sources = new Map((message.sources || []).map(source => [source.id,source]));
+        const priceNotices = [];
+        for (const block of message.blocks || []) {
+          const name = (message.cards || []).find(card => card.id === block.phone_id)?.name || '机型资料';
+          const text = block.text.startsWith(name + '：') || block.text.startsWith(name + ':') ? block.text.slice(name.length + 1).trim() : block.text;
+          const copy = recommendationCopy(text, Boolean(message.followup));
+          priceNotices.push(...copy.notices.map(notice=>name+'：'+notice));
+          const fact = el('div',undefined,'fact');fact.append(el('strong',name),el('div',copy.text));
+          const refs = el('div',undefined,'refs');for (const [index,id] of block.evidence_ids.entries()) {const source = sources.get(id);if (source) refs.append(link(`来源${index+1}`,source.url));}fact.append(refs);bubble.append(fact);
+        }
+        if (message.followup) bubble.append(el('p',message.followup,'conversation-guide'));
+        const detailItems = [...new Set([...(message.details || []),...priceNotices])];
+        if (detailItems.length) {const details = el('details');details.append(el('summary','条件与资料说明'));for (const text of detailItems) details.append(el('p',text));bubble.append(details);}
+        if (sources.size) {
+          const evidence=evidenceGroups(message),details=el('details');
+          details.append(el('summary',evidence.cited.length ? `推荐依据（${evidence.cited.length}个网页）` : '本轮检索记录'));
+          for (const group of evidence.cited) {const section=el('div',undefined,'source');section.append(link(group.sources[0].title,group.url));for(const source of group.sources)section.append(el('p',sourceTypeText(source)),el('p',source.quote));details.append(section);}
+          if(evidence.other.length){const other=el('details');other.append(el('summary',`其他检索记录（${evidence.other.length}条，未用于推荐引用）`));for(const source of evidence.other)other.append(link(source.title,source.url),el('p',sourceTypeText(source)),el('p',source.quote));details.append(other);}
+          bubble.append(details);
+        }
+        if (message.role === 'assistant') {
+          if (message.agent_trace) {
+            const trace = message.agent_trace, details = el('details');
+            details.append(el('summary', `查询与用量 · 模型${trace.metrics?.model_calls ?? '未记录'}次 · 联网${trace.metrics?.network_calls ?? '未记录'}次`));
+            details.append(el('p',chatModeText(null,message.mode,trace)));
+            details.append(el('p',`模型请求 ${trace.metrics?.model_calls ?? '未记录'} 次；联网工具 ${trace.metrics?.network_calls ?? '未记录'} 次；复用缓存 ${trace.metrics?.cache_hits || 0} 次。资料条数与请求次数分别统计。`));
+            const tools = {search_local_phones:'按需求检索本地候选',consider_phones:'提出待验证型号',discover_phones:'按价位寻找新机型',search_phone_knowledge:'查询本地资料',web_search:'搜索公开资料',fetch_page:'核对网页正文'};
+            const statuses = {ok:'找到资料',navigation_only:'仅找到目录链接，未取得对应正文',redirect_only:'已解析跳转目标，正文待核对',redirect_loop:'跳转形成循环，已停止读取',redirect_limit:'达到跳转次数边界，正文未核对',lookup_limit:'达到本轮查询额度',empty:'没有找到资料',duplicate:'跳过重复请求',tool_error:'查询失败',invalid_scope:'查询范围未通过检查',invalid_arguments:'参数未通过检查',invalid_url:'链接未通过检查',tool_call_limit:'达到调用上限'};
+            for (const event of trace.actions || []) {
+              if (event.action === 'reuse_sources') details.append(el('p', `沿用本会话的${event.source_ids.length}条资料。`));
+              if (event.action === 'tool') details.append(el('p', `${tools[event.name] || '资料工具'}：${statuses[event.result?.status] || '已处理'}。`));
+            }
+            const outcome = trace.decision_kind === 'clarify' ? '已提出澄清问题' : trace.decision_kind === 'acknowledge' ? '已确认你的条件或回复' : trace.stop_reason === 'model_finished' ? '助手已结束本轮查询' : '已按执行边界结束查询';
+            details.append(el('p', outcome));
+            const raw = el('details');raw.append(el('summary','查看详细调用记录'));
+            const record = el('pre',JSON.stringify(trace,null,2));record.style.whiteSpace='pre-wrap';record.style.overflowWrap='anywhere';raw.append(record);details.append(raw);bubble.append(details);
+          }
+          const actualMode = evidenceMode(message.mode,message.agent_trace);if (actualMode !== 'AI对话') bubble.append(el('div',actualMode === '资料模式（回答未通过核对）' ? '部分结论缺少支持，已改用资料摘录' : actualMode === '资料模式（模型暂不可用）' ? '模型暂不可用，按资料回答' : '资料参考','mode-tag'));const quick = el('div',undefined,'quick');(message.suggestions || []).forEach(text => quick.append(quickButton(text)));bubble.append(quick);
+        }
+        node.append(bubble);$('#messages').append(node);
+      }
+      const newest = $('#messages').lastElementChild;
+      $('#messages').scrollTop = newest ? newest.offsetTop - $('#messages').offsetTop : 0;
+    }
+    async function newSession() {session = await chatRequest('/api/chat/sessions',{method:'POST'});remember(session.session_id);render();}
+    $('#chatForm').addEventListener('submit', async event => {
+      event.preventDefault();if (busy) return;const message = $('#message').value.trim();if (!message) return;
+      setBusy(true);$('#error').textContent = '';
+      try {session = await chatRequest('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(chatPayload(message,session?.session_id,webEnabled))});remember(session.session_id);$('#message').value = '';render();void refreshHealth();}
+      catch (error) {$('#error').textContent = error.message;} finally {setBusy(false);$('#message').focus();}
+    });
+    $('#message').addEventListener('keydown',event => {if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {event.preventDefault();$('#chatForm').requestSubmit();}});
+    $('#accessLogin').addEventListener('click',()=>{if(busy)return;try{sessionStorage.setItem('phone-selection-access',$('#accessToken').value.trim());$('#accessToken').value='';}catch{}void start();});
+    function showModelSettings() {
+      $('#modelApiKey').value='';$('#modelKeyError').textContent='';
+      $('#modelDestination').textContent=`当前模型：${latestHealth?.model_name || '由部署配置指定'}；供应商地址：${latestHealth?.model_api_host || '由部署配置指定'}。请输入该供应商的 Key，发送聊天时才会调用模型。`;
+      $('#modelKeyStatus').textContent=hasModelApiKey() ? '本标签页已设置 Key。可输入新 Key 替换，或清除。' : latestHealth?.model_configured ? '当前服务已有本机环境配置；你输入的 Key 会仅在本标签页覆盖它。' : '首次使用：设置 Key 后即可开始 AI 选机，也可以先使用资料模式。';
+      $('#skipModelKey').textContent=latestHealth?.model_configured || hasModelApiKey() ? '暂不更改' : '暂用资料模式';
+      $('#clearModelKey').disabled=!hasModelApiKey();
+      if(!$('#modelKeyDialog').open) $('#modelKeyDialog').showModal();
+    }
+    $('#modelSettings').addEventListener('click',()=>{if(!busy)showModelSettings();});
+    $('#modelKeyForm').addEventListener('submit',event=>{
+      event.preventDefault();if(busy)return;
+      try {
+        if(location.protocol!=='https:' && !['localhost','127.0.0.1','[::1]'].includes(location.hostname)) throw new Error('请通过HTTPS或本机localhost连接后再输入API Key。');
+        setModelApiKey($('#modelApiKey').value);$('#modelApiKey').value='';
+        $('#modelKeyDialog').close();updateMode();$('#message').focus();
+      } catch(error) {$('#modelKeyError').textContent=error.message;}
+    });
+    $('#skipModelKey').addEventListener('click',()=>{$('#modelKeyDialog').close();});
+    $('#clearModelKey').addEventListener('click',()=>{clearModelApiKey();updateMode();showModelSettings();});
+    $('#modelKeyDialog').addEventListener('close',()=>{$('#modelApiKey').value='';$('#modelKeyError').textContent='';});
+    $('#newChat').addEventListener('click', async () => {if (busy) return;setBusy(true);$('#error').textContent='';try {await newSession();} catch(error) {$('#error').textContent=error.message;} finally {setBusy(false);}});
+    $('#deleteChat').addEventListener('click', async () => {if (busy || !session) return;setBusy(true);$('#error').textContent='';try {await chatRequest(`/api/chat/sessions/${session.session_id}`,{method:'DELETE'});remember(null);session=null;await newSession();} catch(error) {$('#error').textContent=error.message;} finally {setBusy(false);}});
+    async function start() {
+      render();setBusy(true);
+      try {
+        latestHealth = await chatRequest('/api/health', {cache:'no-store'});updateMode();
+        $('#accessPanel').hidden=!latestHealth.authentication_required;
+        const stored = readStoredId();if (stored && /^[0-9a-f]{32}$/.test(stored)) {
+          try {session = await chatRequest(`/api/chat/sessions/${stored}`);remember(session.session_id);} catch (error) {$('#error').textContent = error.message;remember(null);}
+        }
+        const url = new URL(location.href);if (url.searchParams.has('session')) {url.searchParams.delete('session');history.replaceState(null,'',url.pathname+url.search+url.hash);}
+        if (!session) await newSession();else render();
+        if(!latestHealth.model_configured && !hasModelApiKey())showModelSettings();
+      } catch(error) {$('#error').textContent=error.message;$('#mode').textContent='服务暂未连接';} finally {setBusy(false);}
+    }
+    window.addEventListener('focus', () => {void refreshHealth();});
+    document.addEventListener('visibilitychange', () => {if (!document.hidden) void refreshHealth();});
+    start();
+  </script>
+</body>
+</html>
