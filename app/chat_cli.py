@@ -1,10 +1,14 @@
 """Start the standalone conversation service."""
 import argparse
+import sys
 import uvicorn
 from .config import get_settings
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description="启动多轮选机对话助手")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8130)
