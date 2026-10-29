@@ -19,8 +19,11 @@ from .public_search import search_web, search_sogou_web
 from .retrieval import build_queries, exact_model_in_text, focus_aliases, focus_terms, source_score, variant_only_title
 from .tools import fetch_html, validate_public_url, FetchedHtml, RedirectBoundary
 from .config import MAX_REDIRECTS
-from .evidence_rules import measured_game_parts, photo_observation, endurance_observation
+from .evidence_rules import measured_game_parts, photo_observation, endurance_observation, FOREIGN_FACT, owned_fact_text
 from .execution_context import DeadlineExceeded
+from .feature_requirements import feature_keys, feature_values
+from .phone_identity import identity_key
+from .selection_prices import price_facts, conditional_price, price_amount_role
 
 from .source_rules import OFFICIAL_DOMAINS, official_phone_url
 logger = logging.getLogger(__name__)
@@ -33,7 +36,7 @@ def directory_links(phone, query):
         rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     except (OSError, ValueError):
         return []
-    rows = [row for row in rows if normalized_name(row["phone_name"]) == normalized_name(phone.name)]
+    rows = [row for row in rows if identity_key(row["phone_name"]) == identity_key(phone.name)]
     review_need = bool(re.search(r"游戏|原神|星穹铁道|帧率|实测|评测|发热", query))
     rows.sort(key=lambda row: row["kind"] != ("review" if review_need else "spec_price"))
     return [{"title": row["title"], "url": row["url"], "snippet": "来源目录线索，正文尚未核对，不包含预设答案。",
@@ -89,6 +92,36 @@ def article_root(soup):
     return soup.find('main') or soup.body or soup
 
 
+def field_value_pairs(main):
+    """Keep a short label with its adjacent value, within the same container."""
+    pairs=[]
+    for label in main.select('dt, th, p, span, div, td'):
+        key=label.get_text(' ',strip=True)
+        if not 1<=len(key)<=30 or label.find(['p','div','dt','dd','table']):continue
+        if feature_values(key):continue  # An assertion is not a field label.
+        if not (feature_keys(key) or re.fullmatch(r'重量|厚度|刷新率|屏幕刷新率|电池容量|CPU型号|处理器|芯片|屏幕形态|移动平台|处理平台',key,re.I)):
+            continue
+        sibling=label.find_next_sibling()
+        if sibling is None or sibling.name not in {'dd','td',label.name}:continue
+        value=' '.join(sibling.get_text(' ',strip=True).split())
+        parent=label.parent.get_text(' ',strip=True)
+        if not value or len(value)>400 or len(parent)>650:continue
+        # Never merge the next model heading into a field value.
+        if sibling.find(['h1','h2','h3']) or parse_phone_names(value):continue
+        pairs.append((label,key+'：'+value))
+    return pairs
+
+
+def in_model_section(element,main,phone_name):
+    """Short anonymous cells inherit the nearest named section, not the title."""
+    wanted=identity_key(phone_name)
+    for heading in element.find_all_previous(['h1','h2','h3','h4'],limit=16):
+        if heading is not main and main not in heading.parents:continue
+        names=parse_phone_names(heading.get_text(' ',strip=True))
+        if names:return all(identity_key(m.name)==wanted for m in names)
+    return True
+
+
 def extract_phone_excerpt(phone_name: str, html: str, need: str) -> str | None:
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.get_text(" ", strip=True) if soup.title else ""
@@ -96,31 +129,42 @@ def extract_phone_excerpt(phone_name: str, html: str, need: str) -> str | None:
         return None
     for element in soup(["script", "style", "noscript", "svg", "nav", "footer", "header", "aside"]):
         element.decompose()
+    # Remove the narrow comparison cell, keeping the phone's adjacent own value.
+    for element in list(soup.select('span, dt, th, dd, div, p')):
+        if element.parent is None:continue
+        value=element.get_text(' ',strip=True)
+        if re.match(FOREIGN_FACT,value) and len(value)<120:
+            if element.name in {'dt','th'}:
+                sibling=element.find_next_sibling(['dd','td'])
+                if sibling:sibling.decompose()
+            element.decompose()
     main = article_root(soup)
     body = main.get_text(" ", strip=True)
     if not exact_model_in_text(phone_name, body) or re.search(r"^.{0,80}(?:404|页面不存在|page not found)", body, re.I):
         return None
     headings = " ".join(e.get_text(" ", strip=True) for e in main.select("h1"))
     identified = exact_model_in_text(phone_name, title) or exact_model_in_text(phone_name, headings)
-    wanted = normalized_name(phone_name)
-    mixed = any(normalized_name(m.name) != wanted for m in parse_phone_names(title + " " + body))
+    wanted = identity_key(phone_name)
+    mixed = any(identity_key(m.name) != wanted for m in parse_phone_names(title + " " + body))
     # A dedicated product/specification page can contain anonymous spec cells and
     # later comparisons; a comparison page needs a model name in each excerpt.
     single_page = exact_model_in_text(phone_name, title) and all(
-        normalized_name(m.name) == wanted for m in parse_phone_names(title))
+        identity_key(m.name) == wanted for m in parse_phone_names(title))
     candidates, seen = [], set()
     aliases = focus_aliases(need)
-    for element in main.select("h1, h2, h3, p, li, td, dt, dd, div, span"):
+    fields=field_value_pairs(main)
+    for element,field in [*fields,*((e,None) for e in main.select("h1, h2, h3, p, li, td, dt, dd, div, span"))]:
         if element.name in {"h1", "h2", "h3"}:
             continue  # Section headings and article-link titles aren't test results.
+        if not in_model_section(element,main,phone_name):continue
         if any(re.search(r"(?:^|[-_\s])(?:related|recommend|sidebar|comment|hot-list)(?:$|[-_\s])",
                          " ".join(parent.get("class", [])) + " " + parent.get("id", ""), re.I)
                for parent in [element, *list(element.parents)[:4]]):
             continue
         # Avoid combining an entire page or several unrelated specification cells.
-        if element.name in {"div", "span", "li", "td"} and element.find(["div", "p", "li", "table"]):
+        if not field and element.name in {"div", "span", "li", "td"} and element.find(["div", "p", "li", "table"]):
             continue
-        value = " ".join(element.get_text(" ", strip=True).split())
+        value = owned_fact_text(field or " ".join(element.get_text(" ", strip=True).split()))
         linked = sum(len(a.get_text(" ", strip=True)) for a in element.select("a[href]"))
         if linked and linked >= len(value) * .7:
             continue
@@ -137,17 +181,18 @@ def extract_phone_excerpt(phone_name: str, html: str, need: str) -> str | None:
                     if 1 <= len(key) <= 30 and key not in value:
                         value = key + "：" + value
                         break
-        if not 12 <= len(value) <= 650 or value in seen:
+        minimum=2 if field or feature_values(value) or re.match(r'(?:电池(?:容量)?|机身重量|重量|厚度|内存|存储|刷新率)[：:\s]',value) else 12
+        if not minimum <= len(value) <= 650 or value in seen:
             continue
         seen.add(value)
         names = parse_phone_names(value)
-        if any(normalized_name(m.name) != wanted for m in names) or variant_only_title(phone_name, value):
+        if any(identity_key(m.name) != wanted for m in names) or variant_only_title(phone_name, value):
             continue
         exact = exact_model_in_text(phone_name, value)
         if not single_page:
             heading = element.find_previous(["h1", "h2", "h3", "h4"])
             heading_names = parse_phone_names(heading.get_text(" ", strip=True)) if heading else []
-            if heading_names and any(normalized_name(m.name) != wanted for m in heading_names):
+            if heading_names and any(identity_key(m.name) != wanted for m in heading_names):
                 continue
             # A comparison such as "X的亲民版" describes a different unnamed
             # subject, even when X is the only explicit model in this paragraph.
@@ -155,9 +200,10 @@ def extract_phone_excerpt(phone_name: str, html: str, need: str) -> str | None:
                 continue
         if not exact and (not identified or mixed and not single_page):
             continue
-        if not exact and not re.search(r"刷新率|屏幕|电池|充电|摄像头|像素|镜头|处理器|芯片|CPU|GPU|骁龙|天玑|mAh|机身|重量|厚度|续航|游戏|实测|样张|原神|星穹铁道|王者|售价|零售价", value, re.I):
+        if not exact and not feature_keys(value) and not re.search(r"刷新率|屏幕|电池|充电|摄像头|像素|镜头|处理器|芯片|CPU|GPU|骁龙|天玑|mAh|机身|重量|厚度|续航|游戏|实测|样张|原神|星穹铁道|王者|售价|零售价", value, re.I):
             continue  # Anonymous promotion/navigation text isn't phone evidence.
         score = sum(any(alias in value for alias in group) for group in aliases) * 5
+        if feature_keys(value):score+=1
         score += sum(word in value for word in ("摄像", "相机", "电池", "充电", "芯片", "CPU", "GPU", "mAh", "显示", "重量", "处理器", "售价", "小时", "Hz", "GB"))
         if re.search(r"原神|星穹铁道|王者荣耀|游戏|性能|电竞", need) and re.search(r"原神|星穹铁道|王者荣耀", value):
             score += 20
@@ -177,6 +223,15 @@ def extract_phone_excerpt(phone_name: str, html: str, need: str) -> str | None:
             candidates.append((score, value))
     candidates.sort(key=lambda pair: -pair[0])
     picked = []
+    # Requested field results (including explicit negatives) get slots before
+    # broad topics such as charging, which might otherwise select reverse power.
+    for key in feature_keys(need):
+        covered=set()
+        for _,value in candidates:
+            values={v for k,v in feature_values(value) if k==key}
+            if values-covered and not any(value in old for old in picked):
+                picked.append(value);covered.update(values)
+            if len(covered)==2:break
     # Keep one useful passage for each active dimension before filling the rest.
     # Otherwise several long price/configuration cells can crowd out a photo or
     # endurance observation in a mixed-use question.
@@ -207,35 +262,39 @@ def extract_phone_excerpt(phone_name: str, html: str, need: str) -> str | None:
         picked.append(value)
         if len(picked) >= 6:
             break
-    return " / ".join(picked)[:1800] or None
+    bounded=[]
+    for value in picked[:6]:
+        if len(' / '.join([*bounded,value]))<=1800:bounded.append(value)
+    return ' / '.join(bounded) or None
 
 
 def extract_price_options(phone_name, html):
     """Read version/price pairs from a dedicated phone page, not a comparison."""
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.get_text(" ", strip=True) if soup.title else ""
-    wanted = normalized_name(phone_name)
-    if not exact_model_in_text(phone_name, title) or any(normalized_name(m.name) != wanted for m in parse_phone_names(title)):
+    wanted = identity_key(phone_name)
+    if not exact_model_in_text(phone_name, title) or any(identity_key(m.name) != wanted for m in parse_phone_names(title)):
         return [], ""
     for node in soup(["script", "style", "nav", "header", "footer", "aside"]):
         node.decompose()
-    pattern = re.compile(r"(\d{1,2}\s*GB\s*[+/]\s*(?:\d{2,4}\s*GB|[12]\s*TB))\s*[)）]?\s*[:：]?\s*(?:售价|价格)?\s*[¥￥]?\s*(\d{3,5})(?:\.\s*0{1,2})?\s*元", re.I)
     offers, quotes = {}, []
-    for element in article_root(soup).select("p, li, td, dd"):
+    main=article_root(soup)
+    for element in main.select("p, li, td, dd, tr"):
+        if not in_model_section(element,main,phone_name):continue
         text = " ".join(element.get_text(" ", strip=True).split())
-        if len(text) > 650 or any(normalized_name(m.name) != wanted for m in parse_phone_names(text)):
+        if re.match(r'本文属于原创|如若转载|转载请|版权声明|本文链接|原文链接',text):continue
+        if element.name=='tr' and not exact_model_in_text(phone_name,text):continue
+        if (not exact_model_in_text(phone_name,text) and re.search(r'(?:Redmi|Xiaomi|vivo|iQOO|OPPO|OnePlus|realme|荣耀|华为|小米|一加|苹果)[^，。；]{0,18}\d',text,re.I)):continue
+        if len(text) > 650:
             continue
-        previous_end,other_variant=0,False
-        for match in pattern.finditer(text):
-            label=text[previous_end:match.start()]
-            previous_end=match.end()
-            if variant_only_title(phone_name,label):other_variant=True
-            elif exact_model_in_text(phone_name,label):other_variant=False
-            if other_variant:continue
-            price = int(match[2])
-            if not 500 <= price <= 100000:
+        for fact in price_facts(text,phone_name):
+            if fact['owner']!=wanted or not fact['variant']:continue
+            if price_amount_role(text,fact)!='price':continue
+            if conditional_price(text,fact):continue
+            price = int(fact['price'])
+            if price!=fact['price'] or not 500 <= price <= 100000:
                 continue
-            variant = re.sub(r"\s+", "", match[1]).upper().replace("/", "+")
+            variant = fact['variant']
             offers[(variant, price)] = PriceOption(variant=variant, price=price)
             if not any(text in old for old in quotes):
                 quotes.append(text)
@@ -255,7 +314,7 @@ def phone_page_links(phone, url, html, need):
         node.decompose()
     current_host = urlsplit(url).hostname
     product = re.search(r"(?:index|/)(\d{6,9})(?:\.shtml|/)", urlsplit(url).path)
-    aliases = {normalized_name(a) for a in [phone.name, *phone.aliases]}
+    aliases = {identity_key(a) for a in [phone.name, *phone.aliases]}
     model_keys = aliases | {normalized_name(phone.name.split(" ", 1)[-1])}
     found = {}
     for anchor in soup.find_all("a", href=True):
@@ -264,7 +323,7 @@ def phone_page_links(phone, url, html, need):
         if target == url.split("#", 1)[0] or not text or variant_only_title(phone.name, text):
             continue
         names = parse_phone_names(text)
-        if any(normalized_name(m.name) not in aliases for m in names):
+        if any(identity_key(m.name) not in aliases for m in names):
             continue
         same_name = exact_model_in_text(phone.name, text)
         if official_phone_url(phone.brand, url) and normalized_name(text) in model_keys:
@@ -295,7 +354,7 @@ def phone_page_links(phone, url, html, need):
     return result
 
 
-def source_market(url: str, title: str) -> str:
+def source_market(url: str, title: str, price_quote: str = '') -> str:
     """Reject known non-mainland official variants; mark unconfirmed review regions."""
     parsed = urlsplit(url)
     host, path = (parsed.hostname or "").lower(), parsed.path.lower()
@@ -312,6 +371,11 @@ def source_market(url: str, title: str) -> str:
     if path.startswith("/cn/") and any(host == domain or host.endswith('.' + domain) for domain in
                                       ("oneplus.com", "oppo.com", "honor.com", "realme.com", "samsung.com", "consumer.huawei.com")):
         return "中国大陆"
+    if (re.search(r'中国大陆|国行|人民币|\bRMB\b|国补',price_quote,re.I)
+        or re.search(r'(?:京东|天猫)(?!国际|香港|海外)',price_quote) and re.search(r'\d+\s*元',price_quote)
+        or host.endswith('.cn') and re.search(r'报价|参考价',title) and re.search(r'￥\s*\d+',price_quote)):
+        if not re.search(r'港币|港元|台币|新台币|美元|美版|港版|台版|国际版|海外版|全球购|京东国际|天猫国际|京东香港|天猫香港',price_quote):
+            return '中国大陆'
     return "地区未确认"
 
 
@@ -329,12 +393,41 @@ def page_kind(title: str, excerpt: str) -> str:
     # literal word 样张. Require multiple concrete aspects plus observed behavior,
     # rather than upgrading an advertising adjective to a measured conclusion.
     photo_result = photo_observation(excerpt) and re.search(r"拍摄|样张|实拍|照片|摄像头|主摄|镜头", excerpt)
-    if preview_kind(title) == "review" and (measured_game_parts(excerpt) or photo_result or endurance_observation(excerpt)
-            or re.search(r"实拍|样张|续航测试|续航实测|充电实测|充电测试|屏幕实测|亮度实测", excerpt)):
+    if re.search(r'参数|规格|specifications|\bspecs\b',title,re.I):return 'spec'
+    measured=any(re.search(r'原神|王者荣耀|星穹铁道|绝区零|和平精英|《[^》]+》|游戏',part)
+                 for part in measured_game_parts(excerpt))
+    marketing=bool(re.search(r'宣传|广告|号称|官方标称|实验室测算|官方实验室',excerpt))
+    if not marketing and (measured or preview_kind(title) == "review" and (photo_result or endurance_observation(excerpt)
+            or re.search(r"实拍|样张|续航测试|续航实测|充电实测|充电测试|屏幕实测|亮度实测", excerpt))):
         return "review"
-    if preview_kind(title) == "price" and re.search(r"价格|售价|RMB|人民币|元", excerpt):
+    if (preview_kind(title) == "price" and re.search(r"价格|售价|RMB|人民币|元", excerpt)
+        or re.search(r'\d+\s*(?:GB|TB)',excerpt,re.I) and re.search(r'(?:售价|参考价|实付|到手价)[^。；]{0,12}\d+\s*元',excerpt)):
         return "price"
     return "spec"
+
+
+def page_failure_kind(phone_name,html,excerpt):
+    """Describe this fetch only; never infer that the whole web lacks evidence."""
+    if excerpt:return None
+    soup=BeautifulSoup(html,'html.parser')
+    title=soup.title.get_text(' ',strip=True) if soup.title else ''
+    if re.search(r'验证码|人机验证|安全验证|访问验证|captcha',title,re.I) or soup.select_one('#risk-captcha-app, .g-recaptcha, [data-sitekey]'):
+        return 'captcha'
+    if re.search(r'access denied|forbidden|访问被拒绝|访问受限|拒绝访问|请求过于频繁',title,re.I):return 'access_blocked'
+    for node in soup(['script','style','noscript','nav','header','footer']):node.decompose()
+    text=article_root(soup).get_text(' ',strip=True)
+    if len(text)<12 or re.search(r'404|页面不存在|page not found',title,re.I):return 'no_body'
+    if variant_only_title(phone_name,title) or not exact_model_in_text(phone_name,title+' '+text):return 'model_mismatch'
+    return 'no_relevant_passage'
+
+
+FETCH_HINTS={
+    'captcha':'页面要求验证码，未取得正文；不尝试绕过，可选择其他已发现来源或停止。',
+    'access_blocked':'本次访问被阻断，未取得正文；可选择其他来源，不能据此判断产品表现。',
+    'no_body':'未解析到可用正文，可能依赖脚本或只是导航；可换正文来源。',
+    'model_mismatch':'页面未通过完整型号边界核对，未作为该款来源。',
+    'no_relevant_passage':'页面没有提取到与本轮问题相关的可引用段落；可调整关注字段或选择其他来源。',
+}
 
 
 def published_date(html: str) -> str | None:
@@ -493,7 +586,7 @@ class PublicPhoneSources:
 
     def search(self, phone, query: str, *, refresh=False, backend="bing"):
         """Execute exactly the model's query; return previews without fetching bodies."""
-        key = hashlib.sha256(f"agent-search-v10\n{phone.id}\n{query}\n{backend}".encode()).hexdigest()
+        key = hashlib.sha256(f"agent-search-v11\n{phone.id}\n{query}\n{backend}".encode()).hexdigest()
         cache_file = self.cache_dir / (key + ".json")
         cached = self._cached_result(cache_file, phone) if not refresh else None
         if cached is not None:
@@ -504,7 +597,7 @@ class PublicPhoneSources:
             searcher = self.search_backend(backend)
             # Filter for the exact model after retrieving enough results; four
             # unmatching previews must not hide a useful fifth/sixth result.
-            public_hits = searcher(query, 8)[:8]
+            public_hits = [hit for hit in searcher(query, 8)[:8] if isinstance(hit,dict)]
         except DeadlineExceeded:
             raise
         except Exception as error:
@@ -518,7 +611,7 @@ class PublicPhoneSources:
             title, snippet, url = (str(hit.get(name) or "") for name in ("title", "snippet", "url"))
             if url in seen or not exact_model_in_text(phone.name, title + " " + snippet) or variant_only_title(phone.name, title):
                 continue
-            mixed_preview = any(normalized_name(m.name) != normalized_name(phone.name) for m in parse_phone_names(snippet))
+            mixed_preview = any(identity_key(m.name) != identity_key(phone.name) for m in parse_phone_names(snippet))
             try:
                 validate_public_url(url)
             except ValueError:
@@ -561,15 +654,17 @@ class PublicPhoneSources:
                     "directory_pointer_pages":sum(c.get('discovery_origin')=='curated_url_directory' for c in candidates),
                     "navigation_pages": sum(c.get("status") == "navigation_only" for c in candidates),
                     "error_type": search_error}
+        feedback['reason']='transport_error' if search_error else 'no_matching_results' if not feedback['public_matching_pages'] else 'matching_leads'
+        status='tool_error' if search_error and not candidates else 'navigation_only' if candidates and all(c.get('status')=='navigation_only' for c in candidates) else 'ok' if candidates or sources else 'empty'
         if not feedback['public_matching_pages']:
             feedback["unmatched_titles"] = [h.get("title", "")[:100] for h in public_hits[:3]]
             feedback["hint"] = "本次搜索引擎未返回匹配完整型号的公开页面，可能仍有补充目录线索；目录链接不能证明游戏表现。可自主换引擎、用型号别名或限定评测来源查询，不要把本次未找到说成全网没有实测。"
         # Empty/failed searches are useful feedback too. Cache them so repeated
         # turns do not pay the same network cost; refresh remains explicit.
         self._write_cache(cache_file, {"sources": [s.model_dump() for s in sources],
-            "candidates": candidates, "search_feedback": feedback,
+            "candidates": candidates, "search_feedback": feedback,'status':status,
             **({'expires_at':time.time()+300} if not feedback['public_matching_pages'] or search_error else {})})
-        return {"sources": sources, "candidates": candidates, "lookup_origin": "network", "search_feedback": feedback}
+        return {"sources": sources, "candidates": candidates, "lookup_origin": "network", "search_feedback": feedback,'status':status}
 
     def fetch(self, phone, url: str, need: str, *, refresh=False):
         return self.fetch_result(phone, url, need, refresh=refresh)["sources"]
@@ -609,6 +704,7 @@ class PublicPhoneSources:
             raise  # A turn deadline is not a persistent failure of this page.
         except Exception as error:
             kind=type(error).__name__
+            if getattr(getattr(error,'response',None),'status_code',None) in {401,403,429}:kind='access_blocked'
             logger.warning('public_fetch_failed error_type=%s',kind)
             self._write_cache(failure_cache,{'error_type':kind,'expires_at':time.time()+300})
             return None,'network',kind
@@ -619,7 +715,7 @@ class PublicPhoneSources:
 
     def fetch_result(self, phone, url: str, need: str, *, refresh=False, redirect_budget=None):
         """Fetch one caller-approved URL; the agent adapter enforces URL provenance."""
-        key = hashlib.sha256(f"agent-fetch-v13\n{phone.id}\n{url}\n{need}".encode()).hexdigest()
+        key = hashlib.sha256(f"agent-fetch-v18\n{phone.id}\n{url}\n{need}".encode()).hexdigest()
         validate_public_url(url)
         cache_file = self.cache_dir / (key + ".json")
         cached = self._cached_result(cache_file, phone) if not refresh else None
@@ -633,8 +729,9 @@ class PublicPhoneSources:
         html,origin,error_type=self._page(url,refresh,redirect_budget)
         if error_type:
             return {'sources':[],'candidates':[],'lookup_origin':origin,
-                    'status':error_type if error_type in {'redirect_limit','redirect_loop'} else 'tool_error',
+                    'status':error_type if error_type in {'redirect_limit','redirect_loop'} else 'blocked' if error_type=='access_blocked' else 'tool_error',
                     'fetch_feedback':{'error_type':error_type,
+                        'reason':error_type if error_type in {'redirect_limit','redirect_loop','access_blocked'} else 'transport_error',
                         'hint':'正文暂不可用；复用已有证据或选择其他已发现来源，不重复请求同一失败页面。'}}
         requested_url = url
         url = getattr(html,'resolved_url',url)
@@ -661,21 +758,18 @@ class PublicPhoneSources:
             excerpt = None  # Product review index is navigation, not an original test.
         soup = BeautifulSoup(html, "html.parser")
         title = soup.title.get_text(" ", strip=True)[:240] if soup.title else phone.name
-        market = source_market(url, title)
+        offers, price_quote = extract_price_options(phone.name, html)
+        market = source_market(url, title, price_quote)
         if market == "其他地区":
             return {"sources": [], "candidates": [], "lookup_origin": origin}
-        offers, price_quote = [], ""
-        # A quoted retail/version price need not be an official launch price.
-        # Require explicit mainland/currency context for a non-official page.
-        if market == "地区未确认" and re.search(r"中国大陆|国行|人民币|\bRMB\b|国补", article_root(soup).get_text(" ", strip=True), re.I):
-            market = "中国大陆"
-        if market == "中国大陆":
-            offers, price_quote = extract_price_options(phone.name, html)
+        # Market context must come from the owned price paragraphs, not a
+        # navigation/footer mentioning an unrelated mainland offer.
+        if market != '中国大陆':offers = []
         source_id = phone.id + ":web-" + hashlib.sha256(url.encode()).hexdigest()[:20]
         sources = [ChatSource(id=source_id,
             phone_id=phone.id, title=title, url=url, quote=excerpt[:1800], checked_on=checked_today(),
             source_type="page", market=market, published_on=published_date(html),
-            evidence_kind=page_kind(title, excerpt))] if excerpt else []
+            evidence_kind='spec' if official_phone_url(phone.brand,url) else page_kind(title, excerpt))] if excerpt else []
         if offers:
             first = min(offers, key=lambda offer: offer.price)
             sources.append(ChatSource(id=source_id + ":prices", phone_id=phone.id, title=title + " · 版本价格",
@@ -683,10 +777,16 @@ class PublicPhoneSources:
                 published_on=published_date(html), evidence_kind="price", price_options=offers,
                 reference_price=first.price, price_variant=first.variant))
         candidates = phone_page_links(phone, url, html, need)
+        reason=page_failure_kind(phone.name,html,excerpt) if not sources else None
+        feedback={'reason':reason,'hint':FETCH_HINTS[reason]} if reason else {
+            'reason':'body_extracted','classification':'official_configuration' if official_phone_url(phone.brand,url) else 'body_test_report' if any(s.evidence_kind=='review' for s in sources) else 'configuration_or_price',
+            'hint':'review表示来源作者报告的测试或观察，不代表本项目独立核验。'}
+        status='blocked' if reason in {'captcha','access_blocked'} else 'empty' if not sources else 'ok'
         if not sources:self._expire_page(requested_url)
         self._write_cache(cache_file, {"sources": [s.model_dump() for s in sources], "candidates": candidates,**provenance,
+            'status':status,'fetch_feedback':feedback,
             **({'expires_at':time.time()+300} if not sources else {})})
-        return {"sources": sources, "candidates": candidates, "lookup_origin": origin,**provenance}
+        return {"sources": sources, "candidates": candidates, "lookup_origin": origin,'status':status,'fetch_feedback':feedback,**provenance}
 
     def fetch_following_result(self, phone, url: str, need: str, *, refresh=False):
         """Read a chosen page through bounded, literal search redirects only.
@@ -721,81 +821,40 @@ class PublicPhoneSources:
             'network_operations':network,'cache_operations':sum(s['lookup_origin']=='cache' for s in steps)}
 
     def collect(self, phone, need: str, *, refresh: bool = False) -> list[ChatSource]:
-        topics = " ".join(focus_terms(need)) or "拍照 续航 价格"
-        gaming = bool(re.search(r"游戏|原神|王者|帧率|性能|手游|电竞", need))
+        return self.collect_result(phone,need,refresh=refresh)['sources']
+
+    def collect_result(self,phone,need,*,refresh=False,reserve=None):
+        """Bounded fallback acquisition via the same search/body adapters.
+
+        This fixed-mode adapter is not the model's Agent loop. It returns all
+        attempts and failures and never silently changes search providers.
+        """
+        topics=' '.join(focus_terms(need)) or '拍照 续航 价格'
+        gaming=bool(re.search(r'游戏|原神|王者|帧率|性能|手游|电竞',need))
+        queries=list(build_queries(phone.name,topics))
+        if phone.brand in OFFICIAL_DOMAINS:queries[0]=f'{phone.name} site:{OFFICIAL_DOMAINS[phone.brand]}'
         if gaming:
-            topics += " 游戏 帧率 发热"
-        key = hashlib.sha256(f"v3\n{phone.name}\n{topics}".encode()).hexdigest()
-        path = self.cache_dir / (key + ".json")
-        cached = self._read_cache(path) if not refresh else None
-        if cached is not None:
-            try:
-                cached = [ChatSource.model_validate(item) for item in cached]
-                if cached and all(item.phone_id == phone.id for item in cached):
-                    return cached
-            except (ValueError, TypeError):
-                pass
-        found = {}
-        queries = list(build_queries(phone.name, topics))
-        if phone.brand in OFFICIAL_DOMAINS:
-            queries[0] = f'{phone.name} site:{OFFICIAL_DOMAINS[phone.brand]}'
-        if gaming:
-            queries[1] = f'"{phone.name}" 游戏 实测 帧率 发热'
+            queries[1]=f'"{phone.name}" 游戏 实测 帧率 发热'
             queries.append(f'"{phone.name}" 中国大陆 购买 价格')
+        found={};sources=[];actions=[]
         for query in queries:
-            try:
-                hits = self.searcher(query, 4)
-            except Exception as error:
-                logger.warning("fallback_search_failed error_type=%s", type(error).__name__)
-                continue
-            for hit in hits:
-                if not isinstance(hit, dict):
-                    continue
-                title, snippet, url = (str(hit.get(name) or "") for name in ("title", "snippet", "url"))
-                if (not exact_model_in_text(phone.name, title + " " + snippet)
-                    or variant_only_title(phone.name, title)):
-                    continue
-                try:
-                    validate_public_url(url)
-                    if source_market(url, title) == "其他地区":
-                        continue
-                except Exception:
-                    continue
-                found.setdefault(url, {"title": title, "snippet": snippet, "url": url})
-        ranked = sorted(found.values(), key=lambda item: -(
-            source_score(phone.name, topics, item["title"], item.get("snippet", ""))
-            + (8 if urlsplit(item["url"]).hostname in {"www.apple.com.cn", "support.apple.com", "www.mi.com", "m.mi.com", "mi.com"} else 0)))
+            if reserve and not reserve('search'):
+                actions.append({'action':'public_lookup','name':'web_search','status':'lookup_limit'});break
+            result=self.search(phone,query,refresh=refresh)
+            actions.append({'action':'public_lookup','name':'web_search','arguments':{'phone_name':phone.name,'query':query},'result':result})
+            sources.extend(result['sources'])
+            for candidate in result['candidates']:
+                if candidate.get('status')=='body_unverified':found.setdefault(candidate['url'],candidate)
+        ranked=sorted(found.values(),key=lambda h:-source_score(phone.name,topics,h['title'],''))
         if gaming:
-            # Reserve room and a body fetch for measured reviews and price pages.
-            # Official specification pages must not consume the whole lookup.
-            reserved = [next((item for item in ranked if preview_kind(item["title"]) == kind), None)
-                        for kind in ("review", "price")]
-            ranked = list({item["url"]: item for item in [*filter(None, reserved), *ranked]}.values())
-        sources = []
-        for index, hit in enumerate(ranked[:6 if gaming else 4]):
-            excerpt, published_on = None, None
-            if index < (3 if gaming else 2):
-                try:
-                    html = self.fetcher(hit["url"])
-                    excerpt = extract_phone_excerpt(phone.name, html, topics)
-                    if excerpt:
-                        published_on = published_date(html)
-                except Exception as error:
-                    logger.warning("fallback_fetch_failed error_type=%s", type(error).__name__)
-            snippet = hit.get("snippet", "")
-            # An exact title alone does not make a neighbouring variant's preview evidence.
-            mixed_snippet = any(normalized_name(m.name) != normalized_name(phone.name)
-                                for m in parse_phone_names(snippet))
-            quote = excerpt or (snippet if exact_model_in_text(phone.name, snippet)
-                                and not variant_only_title(phone.name, snippet) and not mixed_snippet else None)
-            if not quote:
-                continue
-            source_id = phone.id + ":web-" + hashlib.sha256((hit["url"] + quote).encode()).hexdigest()[:20]
-            sources.append(ChatSource(id=source_id, phone_id=phone.id, title=hit["title"],
-                                      url=hit["url"], quote=quote[:1800], checked_on=checked_today(),
-                                      source_type="page" if excerpt else "snippet",
-                                      market=source_market(hit["url"], hit["title"]), published_on=published_on,
-                                      evidence_kind=page_kind(hit["title"], excerpt) if excerpt else "unknown"))
-        if sources:
-            self._write_cache(path, [source.model_dump() for source in sources])
-        return sources
+            reserved=[next((h for h in ranked if preview_kind(h['title'])==kind),None) for kind in ('review','price')]
+            ranked=list({h['url']:h for h in [*filter(None,reserved),*ranked]}.values())
+        for hit in ranked[:3 if gaming else 2]:
+            if reserve and not reserve('fetch'):
+                actions.append({'action':'public_lookup','name':'fetch_page','status':'lookup_limit'});break
+            result=self.fetch_following_result(phone,hit['url'],need,refresh=refresh)
+            actions.append({'action':'public_lookup','name':'fetch_page','arguments':{'phone_name':phone.name,'url':hit['url']},'result':result})
+            sources.extend(result['sources'])
+        bodies={s.url for s in sources if s.source_type!='snippet'}
+        sources=[s for s in sources if s.source_type!='snippet' or s.url not in bodies]
+        return {'sources':list({s.id:s for s in sources}.values()),'actions':actions}

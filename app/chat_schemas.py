@@ -21,8 +21,11 @@ class SelectionProfile(StrictModel):
     high_refresh_required: bool = False
     games: list[str] = Field(default_factory=list, max_length=8)
     requirements: list[str] = Field(default_factory=list, max_length=12)
+    answer_requirements: list[str] = Field(default_factory=list, max_length=8)
     priorities: list[Topic] = Field(default_factory=list, max_length=5)
     preferred_brands: list[Brand] = Field(default_factory=list, max_length=4)
+    brand_scope: Literal['prefer','only'] = 'only'
+    excluded_series: list[str] = Field(default_factory=list, max_length=12)
     excluded_brands: list[Brand] = Field(default_factory=list, max_length=4)
     excluded_phones: list[str] = Field(default_factory=list, max_length=40)
     candidate_ids: list[str] = Field(default_factory=list, max_length=5)
@@ -55,12 +58,14 @@ class ChatSource(StrictModel):
     reference_price: int | None = Field(default=None, ge=500, le=100000)
     price_variant: str | None = None
     price_options: list[PriceOption] = Field(default_factory=list, max_length=12)
+    refresh_status: Literal['not_requested','pending','verified','failed','not_permitted','not_attempted','superseded'] = 'not_requested'
 
 
 class AnswerBlock(StrictModel):
     phone_id: str
     text: str = Field(min_length=1, max_length=600)
     evidence_ids: list[str] = Field(min_length=1, max_length=8)
+    background_ids: list[str] = Field(default_factory=list,max_length=4)
 
 
 class PhoneCard(StrictModel):
@@ -76,11 +81,16 @@ class PhoneCard(StrictModel):
     match_sources: list[str] = Field(default_factory=list)
 
 
+class PriceReference(AnswerBlock):
+    name: str = Field(min_length=1,max_length=100)
+
+
 class ChatMessage(StrictModel):
     role: Literal["user", "assistant"]
     content: str
     followup: str = Field(default="", max_length=240)
     blocks: list[AnswerBlock] = Field(default_factory=list)
+    price_references: list[PriceReference] = Field(default_factory=list,max_length=3)
     sources: list[ChatSource] = Field(default_factory=list)
     cards: list[PhoneCard] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
@@ -141,6 +151,8 @@ class IntentPatch(StrictModel):
     excluded_phones: list[str] = Field(default_factory=list, max_length=5)
     restore_phones: list[str] = Field(default_factory=list, max_length=5)
     selected_phones: list[str] | None = Field(default=None, max_length=5)
+    candidate_scope: Literal['retain', 'restrict', 'release'] = 'retain'
+    candidate_scope_quote: str = Field(default='', max_length=1500)
     reselect: bool = False
     candidate_action: Literal["retain", "alternatives"] = "retain"
 

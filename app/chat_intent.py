@@ -6,12 +6,15 @@ import re
 import unicodedata
 
 from .chat_schemas import IntentPatch, SelectionProfile
-from .selection_requirements import game_in_text, canonical_games, literal_requirements
+from .selection_requirements import game_in_text, canonical_games, literal_requirements, requested_count
 
 from .topics import TOPIC_WORDS
-from .conversation_context import recent_dialogue
+from .conversation_context import recent_dialogue, answer_requirements
 
 from .chat_prompts import INTENT_INSTRUCTIONS
+from .feature_requirements import update_requirements, requirement_atoms, RequirementOverflow
+from .phone_identity import variant_tail, series_key, PHONE_PATTERN, BRANDS, identity_key
+from .tool_loop import ExecutionLimit
 
 BRAND_WORDS = {"小米": ("小米", "xiaomi"), "REDMI": ("红米", "redmi"),
                "Apple": ("苹果", "iphone", "ios"), "一加": ("一加", "oneplus"),
@@ -52,13 +55,17 @@ def amount(text: str) -> int | None:
     return None
 
 
-def read_budget(text: str) -> int | None:
+def read_budget(text: str, history=()) -> int | None:
     match = re.search(r"(?:预算|不超过|最多花|最高花|控制在|提高到|降到|改成|改到)\s*[:：]?\s*(?:大概|大约|是|到)?\s*([^，。；;\n]{1,20})", text)
     if match:
+        if re.match(r'\d+(?:\.\d+)?\s*(?:mAh|GB|TB|Hz|mm|克|毫米|毫安)',match[1],re.I):return None
         value = amount(match[1])
     elif match := re.search(r"(?:想要|想买|要买|买|要)\s*((?:\d+(?:\.\d+)?\s*[kK千万]?|[一二两三四五六七八九十百千万]+))\s*(?:元|块|左右|价位).{0,6}手机", text):
         value = amount(match[1])
-    elif re.fullmatch(r"\s*(?:\d+(?:\.\d+)?\s*[kK千万块元]?|[一二两三四五六七八九十]+[千万])(?:以内|左右)?\s*", text):
+    elif re.fullmatch(r"\s*(?:\d+(?:\.\d+)?\s*[kK千万块元]?|[一二两三四五六七八九十]+[千万])(?:以内|内|以下|左右)?\s*", text):
+        last=next((m.content for m in reversed(history) if m.role=='assistant'),'')
+        asking=bool(re.search(r'预算|价位|准备花|最多花',last) and re.search(r'多少|多大|几千|[?？]',last))
+        if not asking and not re.search(r'[kK千万块元]|以内|以下|左右|内$',text.strip()):return None
         value = amount(text)
     else:
         return None
@@ -67,6 +74,13 @@ def read_budget(text: str) -> int | None:
 
 def mentioned_phones(text: str, catalog) -> list[tuple[str, int, bool]]:
     lowered, matches, occupied = unicodedata.normalize("NFKC", text).casefold(), [], []
+    for marker in PHONE_PATTERN.finditer(lowered):
+        if re.match(r'(?:Hz|GB|TB|mAh|mm|元|万像素|克)(?![a-z])',lowered[marker.end():],re.I):continue
+        ids=[p.id for p in catalog.values() if identity_key(marker[0]) in {identity_key(n) for n in [p.name,*p.aliases]}]
+        if len(ids)!=1:continue
+        clause=re.split(r'[，。；;\n]',lowered[:marker.start()])[-1]
+        excluded=bool(re.search(NEGATIVE,clause) or re.match(r'\s*(?:不考虑|不要|排除|不选)',lowered[marker.end():]))
+        matches.append((ids[0],marker.start(),excluded));occupied.append(marker.span())
     aliases = sorted(((alias.casefold(), phone.id) for phone in catalog.values()
                       for alias in [phone.name, *phone.aliases]), key=lambda pair: -len(pair[0]))
     for alias, phone_id in aliases:
@@ -75,7 +89,7 @@ def mentioned_phones(text: str, catalog) -> list[tuple[str, int, bool]]:
             if any(start < b and end > a for a, b in occupied):
                 continue
             # K80 must never resolve K80 Pro; iPhone16 must not resolve 16 Pro.
-            if re.match(r"\s*(?:pro|max|ultra|plus|mini|turbo|fe|se|\+|[a-z0-9])", lowered[end:]):
+            if variant_tail(lowered[end:]) or re.match(r'\s*[a-z0-9]',lowered[end:]):
                 continue
             clause = re.split(r"[，。；;\n]", lowered[:start])[-1]
             excluded = bool(re.search(NEGATIVE, clause))
@@ -89,11 +103,47 @@ def mentioned_phones(text: str, catalog) -> list[tuple[str, int, bool]]:
 def brand_outside_model_name(brand: str, text: str, catalog) -> bool:
     """Focusing Xiaomi 17T is not a preference for every Xiaomi-family phone."""
     remaining = text.casefold()
+    for marker in reversed(list(PHONE_PATTERN.finditer(remaining))):
+        if any(identity_key(marker[0]) in {identity_key(n) for n in [p.name,*p.aliases]} for p in catalog.values()):
+            remaining=remaining[:marker.start()]+' '+remaining[marker.end():]
     aliases = sorted((alias.casefold() for phone in catalog.values() for alias in [phone.name, *phone.aliases]),
                      key=len, reverse=True)
     for alias in aliases:
         remaining = remaining.replace(alias, " ")
     return any(word in remaining for word in BRAND_WORDS.get(brand, (brand.casefold(),)))
+
+
+def update_brand_scope(profile,text,catalog):
+    if not any(brand_outside_model_name(b,text,catalog) for b in profile.preferred_brands):return
+    if re.search(r'只(?:考虑|要|选|看)|仅(?:限|考虑)|限定.*品牌|不考虑其他品牌',text):profile.brand_scope='only'
+    elif re.search(r'喜欢|偏好|优先|想继续|继续用',text):profile.brand_scope='prefer'
+
+
+def series_scope(profile,text,history,catalog):
+    """Literal series operation: expansion is turn-local; explicit rejection persists."""
+    recent=conversation_candidates(profile,history,catalog,last_displayed=True)
+    references=[series_key(catalog[pid].name) for pid in recent]
+    brands={s.split('|')[0] for s in references if s}
+    if len(brands)!=1:brands=set(profile.preferred_brands)
+    transient=[]
+    for match in re.finditer(r'(\d{1,3})\s*系列',text):
+        prefix=text[max(0,match.start()-24):match.start()]
+        expand=bool(re.search(r'不止(?:是)?|不限于|除了|其他|别的',prefix))
+        restore=bool(re.search(r'重新考虑|恢复|不排除|也可以|取消',prefix))
+        reject=bool(re.search(r'不要|不考虑|排除|不是|不想要|别再|换掉',prefix)) and not restore
+        if not (expand or reject or restore):continue
+        label=prefix+match[1]
+        named=next((m for m in reversed(list(PHONE_PATTERN.finditer(label))) if m.end()==len(label)),None)
+        if named:key=series_key(named[0])
+        elif len(brands)==1:
+            family=next((s.split('|')[1] for s in references if s and s.split('|')[0] in brands),'')
+            key='|'.join([next(iter(brands)),family,match[1]])
+        else:continue
+        if restore:profile.excluded_series=[s for s in profile.excluded_series if s!=key]
+        elif reject:
+            if key not in profile.excluded_series and len(profile.excluded_series)<12:profile.excluded_series.append(key)
+        else:transient.append(key)
+    return list(dict.fromkeys(transient))
 
 
 @dataclass
@@ -109,12 +159,51 @@ class IntentResult:
     response_focus: str = ""
     grounding_repairs: list[str] | None = None
     focus_topics: list[str] | None = None
+    candidate_scope: str = 'retain'
+    clarification: str = ''
+    execution_limit: str = ''
+    model_attempts: int = 0
 
 
-def rule_intent(profile, text, catalog):
+def literal_candidate_scope(text, selected, catalog=None):
+    """Legacy/offline scope operations; naming a detail never pins a shortlist."""
+    if re.search(r'不限机型|取消.*(?:机型|候选).*(?:限制|范围)|重新推荐|重新选|重新找', text):
+        return 'release'
+    if selected and (re.search(r'只(?:看|考虑|比较|选|要)|限定|范围.*(?:限定|只)',text)
+        or len(selected)>1 and re.search(r'对比|比较|哪个好|怎么选|选哪个|二选一',text)):
+        return 'restrict'
+    if selected and catalog:
+        remainder=text.casefold()
+        aliases=sorted((a for pid in selected for a in [catalog[pid].name,*catalog[pid].aliases]),key=len,reverse=True)
+        for alias in aliases:
+            remainder=re.sub(re.escape(alias.casefold()),'',remainder)
+        # A bare list is itself a requested discussion scope. Detail sentences
+        # leave meaningful words after removing names and cannot enter here.
+        if not re.sub(r'[\s、，,。.?？和与及跟/对比比较]+','',remainder):
+            return 'restrict'
+    return 'retain'
+
+
+def general_assessment(text,selected,catalog):
+    if not selected:return False
+    remainder=unicodedata.normalize('NFKC',text).casefold()
+    for marker in reversed(list(PHONE_PATTERN.finditer(remainder))):
+        if any(identity_key(marker[0])==identity_key(catalog[pid].name) for pid in selected):
+            remainder=remainder[:marker.start()]+' '+remainder[marker.end():]
+    for pid in selected:
+        for alias in sorted([catalog[pid].name,*catalog[pid].aliases],key=len,reverse=True):
+            pattern=r'\s*'.join(re.escape(c) for c in alias.casefold() if not c.isspace())
+            remainder=re.sub(pattern,'',remainder)
+    remainder=re.sub(r'这款(?:手机)?|那款(?:手机)?|它','',remainder)
+    return bool(re.fullmatch(r'\s*(?:你觉得|请|帮我|给我|想|我想)?\s*(?:介绍一下|介绍|了解一下|了解|说说|评价一下|评价)?\s*(?:怎么样|如何|好不好|值得(?:买吗|入手吗)|适合我吗|合适吗)?[?？。！!\s]*',remainder))
+
+
+def rule_intent(profile, text, catalog, history=()):
     """Bounded offline parser; it does not run before a successful model patch."""
+    original=profile
+    profile=profile.model_copy(deep=True)
     ack = []
-    budget = read_budget(text)
+    budget = read_budget(text,history)
     changed = False
     if re.search(r"取消预算|预算不限|预算不限制|不限制预算", text):
         profile.budget_max = None
@@ -189,13 +278,18 @@ def rule_intent(profile, text, catalog):
     if alternatives or re.search(r"重新选|重新推荐", text):
         changed = True
     changed = literal_requirements(profile, text) or changed
+    profile.answer_requirements=answer_requirements(profile.answer_requirements,text)
+    update_brand_scope(profile,text,catalog)
+    for field in type(profile).model_fields:setattr(original,field,getattr(profile,field))
     return IntentResult(changed, selected_mentions,
                         alternatives or bool(re.search(r"重新选|重新推荐", text)),
-                        candidate_action="alternatives" if alternatives else "retain", acknowledged=ack)
+                        candidate_action="alternatives" if alternatives else "retain", acknowledged=ack,
+                        turn_action='recommend' if re.search(r'推荐|重新选|重新找',text) else 'auto',
+                        candidate_scope=literal_candidate_scope(text,selected_mentions,catalog))
 
 
-def conversation_candidates(profile, history, catalog):
-    cards = next((m.cards for m in reversed(history) if m.role == 'assistant'), [])
+def conversation_candidates(profile, history, catalog, *, last_displayed=False):
+    cards = next((m.cards for m in reversed(history) if m.role == 'assistant' and (m.cards or not last_displayed)), [])
     return [pid for pid in ([c.id for c in cards] or profile.candidate_ids) if pid in catalog]
 
 
@@ -216,7 +310,7 @@ def resolve_references(text, profile, history, catalog):
         if profile.focus_phone_id and len(others) == 1:
             return others, ''
         return [], '你说的另一款是哪款？请说机型名称，我会沿用已有预算和用途。'
-    if re.search(r'它|这款|那款', text):
+    if re.search(r'(?:^|[，。；！？?\s]|(?:了解|说说|问问|看看|关于|介绍|认为|比较|和|与|对|选|那|刚才的))它(?=$|[的能可支是有对不呢吗会值好怎嘛，。；！？?？\s])|这款|那款',text):
         if profile.focus_phone_id in catalog:
             return [profile.focus_phone_id], ''
         if len(available) == 1:
@@ -235,8 +329,7 @@ def resolve_phones(names, quote, catalog, profile=None, history=()):
                 resolved.extend(references)
                 continue  # Ambiguity is clarified by the same resolver in the turn route.
         matches = [phone.id for phone in catalog.values()
-                   if name.casefold().replace(" ", "") in
-                   {alias.casefold().replace(" ", "") for alias in [phone.name, *phone.aliases]}]
+                   if identity_key(name) in {identity_key(alias) for alias in [phone.name,*phone.aliases]}]
         if len(matches) != 1 or matches[0] not in available:
             raise ValueError("机型更新必须来自本轮明确提及的完整型号")
         resolved.append(matches[0])
@@ -247,8 +340,28 @@ def apply_model_patch(profile, patch, text, catalog, history=()):
     """Validate an entire patch on a copy, then commit it atomically."""
     if patch.quote not in text:
         raise ValueError("需求引用不属于本轮")
+    patch=patch.model_copy(deep=True)
+    ignored=[]
+    def omit(field,value):
+        if getattr(patch,field)!=value:ignored.append('ungrounded_'+field+'_ignored')
+        setattr(patch,field,value)
+    budget=read_budget(text,history)
+    money_context=bool(re.search(r'预算|手里|兜里|元|块|花|价位|千|万|\d\s*[kK]\b',text))
+    if patch.budget_max is not None:
+        if budget is not None and budget!=patch.budget_max:raise ValueError('预算与本轮金额不一致')
+        if budget is None and not (money_context and amount(text)==patch.budget_max):omit('budget_max',None)
+    if patch.budget_unlimited is not None and not re.search(r'预算|上限|限额',text):omit('budget_unlimited',None)
+    if patch.high_refresh_required is not None and not re.search(r'高刷|刷新率',text):omit('high_refresh_required',None)
+    if patch.recommendation_count is not None and requested_count(text) is None and not re.search(r'[一二两三四五1-5]\s*(?:款|台|部|个备选)',text):omit('recommendation_count',None)
+    if patch.clear_priorities and not re.search(r'(?:用途|偏好).*(?:清空|取消|不考虑)|(?:清空|取消).*(?:用途|偏好)',text):omit('clear_priorities',False)
+    if patch.clear_games and not re.search(r'不玩|取消.*游戏|游戏.*(?:不要|不考虑|清空)',text):omit('clear_games',False)
+    if patch.clear_brand_filters and not re.search(r'品牌|牌子',text):omit('clear_brand_filters',False)
+    if patch.preferred_brands==[] and not re.search(r'品牌|牌子',text):omit('preferred_brands',None)
     if patch.response_focus and patch.response_focus not in patch.quote:
         raise ValueError("回答重点必须来自本轮原文")
+    if patch.candidate_scope != 'retain' and (not patch.candidate_scope_quote
+            or patch.candidate_scope_quote not in patch.quote):
+        raise ValueError('候选范围变更必须引用本轮原文')
     if patch.budget_unlimited and patch.budget_max is not None:
         raise ValueError("预算金额与取消上限冲突")
     if set(patch.priorities or []) & set(patch.remove_priorities):
@@ -257,9 +370,10 @@ def apply_model_patch(profile, patch, text, catalog, history=()):
         raise ValueError("游戏新增与移除冲突")
     if set(patch.requirements) & set(patch.remove_requirements):
         raise ValueError("具体要求新增与移除冲突")
-    if any(not item or item not in patch.quote for item in patch.requirements):
-        raise ValueError("具体要求必须逐字来自本轮")
-    if any(item not in profile.requirements for item in patch.remove_requirements):
+    if any(not item for item in patch.requirements):
+        raise ValueError("具体要求不能为空")
+    if any(item not in profile.requirements and not any(a.key==b.key for a in requirement_atoms(item)
+           for old in profile.requirements for b in requirement_atoms(old)) for item in patch.remove_requirements):
         raise ValueError("只能取消已有具体要求")
     if set(patch.excluded_brands) & set(patch.restore_brands):
         raise ValueError("品牌排除与恢复冲突")
@@ -274,6 +388,7 @@ def apply_model_patch(profile, patch, text, catalog, history=()):
     if set(excluded) & (set(restored) | set(selected)):
         raise ValueError("机型排除与恢复/选择冲突")
     updated = profile.model_copy(deep=True)
+    updated.answer_requirements=answer_requirements(updated.answer_requirements,text)
     if patch.budget_unlimited is True:
         updated.budget_max, updated.budget_unlimited = None, True
         updated.price_preference = "within_budget"
@@ -286,14 +401,14 @@ def apply_model_patch(profile, patch, text, catalog, history=()):
         value = getattr(patch, field)
         if value is not None:
             setattr(updated, field, value)
+    if requested_count(text) is not None:updated.recommendation_count=requested_count(text)
     if any(not game_in_text(game, patch.quote) for game in (patch.games or [])):
         raise ValueError("游戏名称必须来自本轮原文")
     if patch.clear_games or patch.clear_priorities or "游戏" in patch.remove_priorities:
         updated.games = []
     updated.games = canonical_games([g for g in updated.games if g not in canonical_games(patch.remove_games)] + (patch.games or []))
-    if patch.clear_requirements:
-        updated.requirements = []
-    updated.requirements = list(dict.fromkeys([r for r in updated.requirements if r not in patch.remove_requirements] + patch.requirements))
+    updated.requirements = update_requirements(updated.requirements,text,additions=patch.requirements,
+        removals=patch.remove_requirements,clear=patch.clear_requirements)
     if patch.clear_priorities:
         updated.priorities = []
     updated.priorities = [item for item in updated.priorities if item not in patch.remove_priorities]
@@ -309,6 +424,7 @@ def apply_model_patch(profile, patch, text, catalog, history=()):
         updated.excluded_brands = [item for item in updated.excluded_brands if item not in updated.preferred_brands]
     updated.excluded_brands = list(dict.fromkeys(updated.excluded_brands + patch.excluded_brands))[-4:]
     updated.preferred_brands = [item for item in updated.preferred_brands if item not in updated.excluded_brands]
+    update_brand_scope(updated,text,catalog)
     updated.excluded_phones = list(dict.fromkeys(
         [item for item in updated.excluded_phones if item not in restored] + excluded))[-40:]
     # Revalidate the complete state before changing any live field.
@@ -327,7 +443,15 @@ def apply_model_patch(profile, patch, text, catalog, history=()):
     return IntentResult(changed, selected, patch.reselect or patch.candidate_action == "alternatives",
                         candidate_action=patch.candidate_action, acknowledged=ack,
                         turn_action=patch.turn_action, response_focus=patch.response_focus,
-                        focus_topics=[t for t in patch.focus_topics if t in profile.priorities or t=='游戏' and profile.games])
+                        candidate_scope=patch.candidate_scope if patch.candidate_scope!='retain' else literal_candidate_scope(text,selected,catalog),
+                        focus_topics=[t for t in patch.focus_topics if t in profile.priorities or t=='游戏' and profile.games],
+                        grounding_repairs=ignored)
+
+
+def _rule_result(profile,text,catalog,history=()):
+    try:return rule_intent(profile,text,catalog,history)
+    except RequirementOverflow as error:
+        return IntentResult(False,[],False,clarification=str(error))
 
 
 def understand_intent(profile, text, catalog, model, history=()):
@@ -360,15 +484,21 @@ def understand_intent(profile, text, catalog, model, history=()):
                 patch.response_focus=patch.quote[:120]
                 repairs.append('response_focus_replaced_with_user_quote')
             if patch.quote in text and any(item not in patch.quote for item in patch.requirements):
-                patch.requirements = list(dict.fromkeys([
-                    *(item for item in patch.requirements if item and item in patch.quote), patch.quote]))[:12]
-                repairs.append('requirements_replaced_with_user_quote')
+                repairs.append('requirements_grounded_by_property_and_original_span')
             result = apply_model_patch(profile, patch, text, catalog, history)
-            result.grounding_repairs = repairs
+            result.model_attempts=1
+            result.grounding_repairs = [*repairs,*(result.grounding_repairs or [])]
+            return result
+        except RequirementOverflow as error:
+            return IntentResult(False,[],False,clarification=str(error),model_attempts=1)
+        except ExecutionLimit as error:
+            result=_rule_result(profile,text,catalog,history)
+            result.execution_limit=str(error)
             return result
         except Exception as error:
-            result = rule_intent(profile, text, catalog)
+            result = _rule_result(profile, text, catalog,history)
             result.model_failed = True
             result.error_type = type(error).__name__
+            result.model_attempts=1
             return result
-    return rule_intent(profile, text, catalog)
+    return _rule_result(profile, text, catalog,history)

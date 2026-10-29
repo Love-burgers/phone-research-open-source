@@ -6,6 +6,7 @@ import sqlite3
 import uuid
 
 from .chat_schemas import ChatSession
+from .selection_prices import sanitize_session_prices
 
 
 class SessionNotFound(Exception):
@@ -41,7 +42,7 @@ class ChatStore:
             row = db.execute("SELECT data FROM sessions WHERE id = ?", (session_id,)).fetchone()
         if row is None:
             raise SessionNotFound()
-        return ChatSession.model_validate_json(row[0])
+        return sanitize_session_prices(ChatSession.model_validate_json(row[0]))
 
     def save(self, session: ChatSession) -> ChatSession:
         old_revision = session.revision
@@ -60,3 +61,10 @@ class ChatStore:
         with self._connect() as db:
             if db.execute("DELETE FROM sessions WHERE id = ?", (session_id,)).rowcount != 1:
                 raise SessionNotFound()
+
+    def record_knowledge_update(self, session, update):
+        """Annotate a committed turn only; never overwrite a newer revision."""
+        session.messages[-1].agent_trace['local_knowledge_update']=update
+        with self._connect() as db:
+            db.execute('UPDATE sessions SET data=? WHERE id=? AND revision=?',
+                (session.model_dump_json(),session.session_id,session.revision))

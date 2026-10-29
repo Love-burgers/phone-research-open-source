@@ -60,7 +60,7 @@ def prepare(before_store, case_file, case_id, after, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--before-store", type=Path, default=Path("runs/chat-sessions.sqlite3"))
-    parser.add_argument("--cases", type=Path, required=True)
+    parser.add_argument("--cases", type=Path, default=Path("evaluation/user_chat_cases.json"))
     parser.add_argument("--case", default="user-002")
     parser.add_argument("--after", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)

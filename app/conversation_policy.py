@@ -19,19 +19,19 @@ def route_turn(previous, current, intent, *, has_candidates, selected, incompati
     # Operational candidate/focus fields are not user constraints. Classify the
     # validated delta before candidate selection mutates those fields.
     changed = tuple(field for field in type(current).model_fields
-                    if field not in {"candidate_ids", "explicit_candidate_ids", "focus_phone_id"}
+                    if field not in {"candidate_ids", "explicit_candidate_ids", "focus_phone_id", "answer_requirements"}
                     and previous[field] != getattr(current, field))
     focus = intent.response_focus
-    if not has_candidates:
-        return ConversationRoute("recommend", changed, focus, "no_current_candidates")
     if intent.candidate_action == "alternatives":
         return ConversationRoute("alternatives", changed, focus, "explicit_alternatives")
+    if not has_candidates:
+        return ConversationRoute("recommend", changed, focus, "no_current_candidates")
     if (set(changed) == {'games'} and set(previous['games']) <= set(current.games)
             and intent.turn_action == 'revise' and not intent.reselect and not incompatible):
         # Naming another workload is a detail of the existing gaming use. A
         # generic model 'revise' label alone must not replace the shortlist.
         return ConversationRoute('refine', changed, focus, 'additive_workload_without_reselection')
-    if intent.reselect or intent.turn_action in {"recommend", "revise"}:
+    if intent.reselect or intent.candidate_scope == 'release' or intent.turn_action in {"recommend", "revise"}:
         return ConversationRoute("revise", changed, focus, "explicit_selection_update")
     # A semantic 'refine' cannot bypass changed budget/brands/purpose or a
     # demonstrated conflict. Unknown evidence is not a demonstrated conflict.

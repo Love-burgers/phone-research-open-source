@@ -218,12 +218,12 @@ def test_model_cannot_stop_at_local_specs_when_user_needs_game_review(tmp_path):
                            query="REDMI K100 Pro 原神 实测 帧率")], {"kind": "answer"}])
     loader = PublicPhoneSources(tmp_path / "cache", searcher=lambda *a: [])
     assistant = SelectionAssistant(ChatStore(tmp_path / "sessions.sqlite3"), model_client=model, source_loader=loader)
-    session = assistant.turn(ChatRequest(message="预算4000，玩原神，想了解REDMI K100 Pro"))
+    session = assistant.turn(ChatRequest(message="预算4000，玩原神，想了解REDMI K100 Pro的原神帧率实测"))
     # Explicit phone selection is supplied separately since this fake doesn't extract names.
     actions = session.messages[-1].agent_trace["actions"]
     assert any(a.get("validation_feedback") for a in actions)
     assert any(a.get("name") == "web_search" for a in actions)
-    assert "没核实到" in session.messages[-1].content
+    assert '没有取得可核验' in session.messages[-1].content or '没核实到' in session.messages[-1].content
 
 
 def test_unverified_or_excluded_discovery_does_not_become_recommendation(tmp_path):

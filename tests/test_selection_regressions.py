@@ -19,7 +19,7 @@ def test_unfaithful_free_text_retains_original_without_losing_valid_patch(text, 
         turn_action='refine', response_focus=text, requirements=[paraphrase])))
     assert profile.requirements == [text]
     assert not result.model_failed
-    assert result.grounding_repairs == ['requirements_replaced_with_user_quote']
+    assert result.grounding_repairs == ['requirements_grounded_by_property_and_original_span']
     assert profile.priorities == ['游戏','续航'] and profile.budget_max == 6000
 
 
@@ -98,7 +98,9 @@ def test_chip_extraction_does_not_take_prefix_of_hardware_model_number():
     p=phone('a',3000)
     source=ChatSource(id='chip',phone_id=p.id,title='Fixture',url='https://example.com/spec',
         quote='A3288型号支持5G，A18芯片，6核中央处理器。',checked_on='2026-10-22',evidence_kind='spec')
-    assert configuration_facts(p,['游戏'],[source])==[('A18','chip')]
+    facts=configuration_facts(p,['游戏'],[source])
+    assert ('A18','chip') in facts and ('6核中央处理器','chip') in facts
+    assert not any('A3288' in text for text,sid in facts)
 
 
 def test_screen_facts_do_not_promote_touch_sampling_to_refresh_rate():

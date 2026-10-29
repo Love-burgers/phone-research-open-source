@@ -5,6 +5,7 @@ from pathlib import Path
 from .chat_schemas import PhoneCard, PhoneDetails, SelectionProfile
 
 from .selection_prices import select_offer, source_price_options, storage_gb, minimum_storage
+from .phone_identity import series_excluded
 
 
 DATA_DIR = Path(__file__).resolve().parent / "knowledge_samples"
@@ -17,12 +18,18 @@ class CatalogPhone(PhoneDetails):
         reason = ("有可核对的" + "、".join(matched) + "相关配置，列为待选。" if matched
                   else "列入当前资料范围内的候选，可继续核对配置。")
         note = self.note
+        from .selection_requirements import recommendation_notes
+        notes=recommendation_notes(self,profile,sources)
+        if notes:note+=' '+'；'.join(notes)+'。'
+        price_records=[s for s in sources if s.phone_id==self.id and s.evidence_kind=='price']
+        if price_records and all(s.refresh_status in {'pending','failed','not_attempted','not_permitted'} for s in price_records):
+            note+=' 此为历史价格，本轮刷新尚未确认。'
         if self.price is None:
             note += " 当前价格未核对，不能确认是否符合预算。"
         elif profile.budget_max and self.price > profile.budget_max:
             note += " 页面参考价超出你的预算。"
         from .selection_requirements import card_matches
-        matches, urls = card_matches(self.id, profile, sources)
+        matches, urls = card_matches(self.id, profile, sources,phone=self)
         if matches:
             reason = "；".join(matches[:2])
         from .selection_presentation import configuration_facts
@@ -49,7 +56,8 @@ def eligible(phone: CatalogPhone, profile: SelectionProfile) -> bool:
     return (phone.id not in profile.excluded_phones
             and phone.brand not in profile.excluded_brands
             and not (phone.brand == "REDMI" and "小米" in profile.excluded_brands)
-            and (not profile.preferred_brands or phone.brand in profile.preferred_brands
+            and not series_excluded(phone.name,profile.excluded_series)
+            and (profile.brand_scope=='prefer' or not profile.preferred_brands or phone.brand in profile.preferred_brands
                  or phone.brand == "REDMI" and "小米" in profile.preferred_brands))
 
 
@@ -88,7 +96,7 @@ def shortlist(catalog: dict[str, CatalogPhone], profile: SelectionProfile) -> li
     def order(phone):
         matches = sum(len(profile.priorities) - i for i, topic in enumerate(profile.priorities)
                       if topic in phone.topics)
-        return (bool(profile.priorities and profile.priorities[0] not in phone.topics),
+        return (bool(profile.preferred_brands and phone.brand not in profile.preferred_brands),bool(profile.priorities and profile.priorities[0] not in phone.topics),
                 budget_position(phone.price,profile),-matches,
                 phone.price if profile.price_preference == "save_money" else -phone.price, phone.id)
     return [phone.id for phone in sorted(options, key=order)[:profile.recommendation_count]]

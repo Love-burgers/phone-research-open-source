@@ -4,6 +4,7 @@ import re
 
 from .evidence_rules import game_in_text
 from .config import get_settings
+from .feature_requirements import REPORT_FIELDS
 
 
 def shorten(text, limit):
@@ -50,6 +51,7 @@ def recent_dialogue(messages, *, limit=None, characters=None):
 
 
 def focused_games(profile, turn):
+    if turn.get('task') is not None:return list(turn['task'].get('games',[]))
     focus = turn.get('response_focus') or turn.get('message', '')
     terms = turn.get('focus_terms') or []
     current = [g for g in profile.games if g in terms or game_in_text(g, focus)]
@@ -87,3 +89,14 @@ def asks_price(text):
             continue
         return True
     return False
+
+
+def answer_requirements(existing,text):
+    """Evidence presentation preferences, never product qualification gates."""
+    values=list(existing)
+    for clause in re.split(r'[，,。；;\n]',text):
+        for label,pattern in REPORT_FIELDS.items():
+            if not re.search(pattern,clause):continue
+            if re.search(r'取消|不用|无需|不必|不需要',clause):values=[v for v in values if v!=label]
+            elif label not in values:values.append(label)
+    return values[-8:]

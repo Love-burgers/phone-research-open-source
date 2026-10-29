@@ -11,6 +11,46 @@ from app.tool_loop import AgentPolicy
 from tests.test_chat_agent import Model,Public,tool,say,done
 
 
+def test_inventory_recovers_five_priced_candidates_even_when_query_has_no_hits(tmp_path,monkeypatch):
+    names=[f'一加 Ace{i}' for i in range(31,36)];chunks=[]
+    for i,name in enumerate(names):
+        for kind,text in [('spec','骁龙8 Gen2，5000mAh电池，120Hz屏幕。'),('price',f'12GB+256GB {2500+i*50}元')]:
+            chunks.append(KnowledgeChunk(phone_name=name,title=name+'测试夹具',source_url=f'https://www.oneplus.com/cn/ace-{i}/specs',
+                text=text,document_id=f'd-{i}-{kind}',chunk_id=f'c-{i}-{kind}',checked_on='2026-10-22',market='中国大陆',
+                evidence_kind=kind,reference_price=2500+i*50 if kind=='price' else None,price_variant='12GB+256GB' if kind=='price' else None))
+    monkeypatch.setattr(KnowledgeBase,'discover',lambda self,query:[])
+    text='预算3000，主要玩游戏'
+    model=Model([[tool('search_local_phones',query=text,limit=5)],{'kind':'answer','candidate_names':names[:3]}],
+        {text:{'budget_max':3000,'priorities':['游戏']}})
+    app=SelectionAssistant(ChatStore(tmp_path/'s.db'),catalog={},knowledge=KnowledgeBase(KnowledgeIndex(chunks=chunks)),
+        model_client=model,source_loader=Public())
+    reply=app.turn(__import__('app.chat_schemas',fromlist=['ChatRequest']).ChatRequest(message=text,search_mode='local')).messages[-1]
+    local=next(a['result'] for a in reply.agent_trace['actions'] if a.get('name')=='search_local_phones')
+    assert len(local['local_candidates'])==5
+    assert len(reply.blocks)==3
+    assert {c.name for c in reply.cards}==set(names[:3])
+
+
+def test_initial_scope_can_include_indexed_models_without_cross_model_tool(tmp_path):
+    from app.chat_schemas import ChatRequest
+    names=[f'一加 Ace{i}' for i in range(31,34)];chunks=[]
+    for i,name in enumerate(names):
+        for kind,text in [('spec','骁龙8 Gen2，5000mAh电池，120Hz屏幕。'),('price',f'12GB+256GB {2600+i*50}元')]:
+            chunks.append(KnowledgeChunk(phone_name=name,title=name+'测试夹具',source_url=f'https://www.oneplus.com/cn/ace-{i}/specs',
+                text=text,document_id=f'd-{i}-{kind}',chunk_id=f'c-{i}-{kind}',checked_on='2026-10-22',market='中国大陆',
+                evidence_kind=kind,reference_price=2600+i*50 if kind=='price' else None,price_variant='12GB+256GB' if kind=='price' else None))
+    text='预算3000，主要玩游戏'
+    model=Model([[tool('search_phone_knowledge',phone_name=n,query='游戏配置 价格') for n in names],
+                 {'kind':'answer','candidate_names':names[:2]}],{text:{'budget_max':3000,'priorities':['游戏']}})
+    app=SelectionAssistant(ChatStore(tmp_path/'s.db'),knowledge=KnowledgeBase(KnowledgeIndex(chunks=chunks)),
+        model_client=model,source_loader=Public())
+    result=app.turn(ChatRequest(message=text,search_mode='local'));reply=result.messages[-1]
+    assert len(reply.blocks)==3 and len(result.profile.candidate_ids)==3,(model.contexts[0].get('可查询机型'),[(a.get('name'),a.get('result',{}).get('status')) for a in reply.agent_trace['actions'] if a.get('action')=='tool'])
+    assert any(a['action']=='grounded_candidate_backfill' for a in reply.agent_trace['actions'])
+    assert all(n in {p.name for p in result.discovered_phones} for n in names)
+    assert not any(a.get('name')=='search_local_phones' for a in reply.agent_trace['actions'])
+
+
 def test_agent_discovers_multiple_local_models_without_any_public_lookup(tmp_path):
     names=['vivo X100','vivo X200','vivo X300'];chunks=[]
     for i,name in enumerate(names):

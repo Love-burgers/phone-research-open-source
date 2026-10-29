@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 import re
 from typing import Any, Literal
+from contextlib import contextmanager
 
 from langchain.tools import tool
 from langchain_core.documents import Document
@@ -24,10 +25,26 @@ from .retrieval import focus_aliases
 
 from .knowledge_models import KnowledgeDocument, KnowledgeChunk, KnowledgeIndex
 from .provider_embeddings import QuotaEmbeddings
+from .phone_identity import identity_key
 
 
 def _name(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+@contextmanager
+def index_writer(path):
+    """Serialize atomic index replacement across objects and service processes."""
+    import sqlite3
+    db=sqlite3.connect(str(path)+'.writer.sqlite3',timeout=10)
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        yield
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    finally:db.close()
 
 
 def configured_embeddings() -> tuple[Embeddings, str]:
@@ -157,7 +174,7 @@ class PhoneKnowledgeRetriever(BaseRetriever):
 
     def _get_relevant_documents(self, query: str, *, run_manager):
         chunks = [chunk for chunk in self.index.chunks
-                  if not self.filter_phone or _name(chunk.phone_name) == _name(self.phone_name)]
+                  if not self.filter_phone or identity_key(chunk.phone_name) == identity_key(self.phone_name)]
         if not chunks or not query.strip():
             return []
         method = self.search_method or self.index.method
@@ -270,12 +287,24 @@ class KnowledgeBase:
         docs = source_documents(sources,catalog)
         if not docs:
             return {"added_chunks":0}
-        with self.write_lock, tempfile.TemporaryDirectory(dir=self.path.parent) as folder:
+        with self.write_lock, index_writer(self.path), tempfile.TemporaryDirectory(dir=self.path.parent) as folder:
+            current=load_index(self.path)
+            if current.embedding_signature!=self.index.embedding_signature:
+                return {'added_chunks':0,'status':'index_changed'}
+            self.index=current
             source_path = Path(folder)/"incoming.jsonl"
             source_path.write_text("\n".join(d.model_dump_json() for d in docs),encoding="utf-8")
             incoming = build_index(source_path).chunks
             existing = {c.chunk_id for c in self.index.chunks}
-            new = [c for c in incoming if c.chunk_id not in existing]
+            newest={}
+            for c in self.index.chunks:
+                key=(c.phone_name,c.source_url,c.evidence_kind,c.price_variant)
+                newest[key]=max(newest.get(key,''),c.checked_on or '')
+            for c in incoming:
+                key=(c.phone_name,c.source_url,c.evidence_kind,c.price_variant)
+                newest[key]=max(newest.get(key,''),c.checked_on or '')
+            new = [c for c in incoming if c.chunk_id not in existing and (c.checked_on or '')>=newest.get(
+                (c.phone_name,c.source_url,c.evidence_kind,c.price_variant),'')]
             if not new:
                 return {"added_chunks":0}
             # Keep one current offer per source/version; old source records remain

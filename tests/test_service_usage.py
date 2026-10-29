@@ -7,6 +7,21 @@ from fastapi.testclient import TestClient
 from app import web
 from app.chat_store import ChatStore
 from app.config import Settings
+
+
+@pytest.mark.parametrize('overrides,expected',[
+    ({},(18,10,6,8)),
+    ({'TOOL':12,'MODEL':8,'SEARCH':5,'FETCH':6},(12,8,5,6)),
+])
+def test_turn_lookup_limits_are_configurable_separately_from_daily_quota(tmp_path,monkeypatch,overrides,expected):
+    from tests.test_chat_agent import service,Model
+    for key in ['TOOL','MODEL','SEARCH','FETCH']:
+        monkeypatch.delenv('CHAT_TURN_'+key+'_CALLS',raising=False)
+    for key,value in overrides.items():monkeypatch.setenv('CHAT_TURN_'+key+'_CALLS',str(value))
+    assistant=service(tmp_path,Model([]))
+    limits=assistant.agent_policy
+    assert (limits.max_tool_calls,limits.max_model_calls,limits.max_search_calls,limits.max_fetch_calls)==expected
+    assert limits.max_total_tokens==64000
 from app.usage_guard import UsageGuard, QuotaExceeded
 
 

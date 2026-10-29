@@ -5,6 +5,7 @@ import sqlite3
 import ipaddress
 import secrets
 import re
+import hashlib
 from urllib.parse import urlsplit
 from pydantic import SecretStr
 from time import monotonic
@@ -136,5 +137,7 @@ def health():
             "knowledge_models":len({c.phone_name for c in knowledge.index.chunks}),
             "knowledge_chunks":len(knowledge.index.chunks),
             "knowledge_coverage":knowledge.coverage(),
+            "knowledge_source":"configured_index" if path else "bundled_index",
+            "knowledge_index_sha256":hashlib.sha256(knowledge.path.read_bytes()).hexdigest() if knowledge.path else None,
             "retrieval_method":knowledge.search_method or knowledge.index.method,
             "embedding_provider":settings.embedding_provider or None}

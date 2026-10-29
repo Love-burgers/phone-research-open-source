@@ -163,7 +163,8 @@ def test_fixed_mode_flag_does_not_enter_tool_loop(tmp_path, monkeypatch):
     assistant = service(tmp_path, model)
     reply = say(assistant, text).messages[-1]
     assert not assistant.agent_enabled and not model.histories
-    assert reply.agent_trace is None and reply.sources
+    assert reply.agent_trace['engine']=='shared-evidence-retrieval' and reply.sources
+    assert not any(a.get('name') for a in reply.agent_trace['actions'])
 
 
 def test_acknowledgement_updates_budget_and_keeps_other_conditions(tmp_path):
@@ -214,7 +215,9 @@ def test_refresh_does_not_treat_previous_sources_as_fresh(tmp_path):
     assistant = service(tmp_path, model)
     first = say(assistant, text)
     say(assistant, "刷新最新价格", first)
-    assert not model.contexts[-1]["可复用来源"]
+    assert model.contexts[-1]["可复用来源"]
+    assert all(s['evidence_kind']!='price' or s['refresh_status']=='pending'
+               for s in model.contexts[-1]['可复用来源'])
 
 
 def test_chat_agent_rejects_cross_phone_answer_citation(tmp_path):
@@ -303,5 +306,7 @@ def test_home_http_endpoint_returns_agent_trace_and_restores_it(tmp_path, monkey
     result = client.post("/api/chat", json={"message": "想换手机"})
     assert result.status_code == 200
     data = result.json()
-    assert data["messages"][-1]["agent_trace"]["engine"] == "langgraph-chat-agent"
+    trace=data['messages'][-1]['agent_trace']
+    assert trace['engine']=='conversation-control' and trace['decision_kind']=='clarify'
+    assert trace['metrics']['model_calls']==1 and trace['metrics']['tool_calls']==0
     assert client.get('/api/chat/sessions/' + data["session_id"]).json() == data

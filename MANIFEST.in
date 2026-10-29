@@ -13,6 +13,9 @@ exclude tests/test_quota_failure_replay.py tests/test_saved_answer_context.py te
 exclude tests/test_sogou_search.py tests/test_supplement_context.py tests/test_user_game_context.py
 include docs/AGENT.md docs/ARCHITECTURE.md docs/CHAT.md docs/EMBEDDING.md docs/RAG.md docs/PROJECT_SPLIT.md
 include docs/api-key-setup.png
+include docs/chat-demo.png docs/CORPUS.md docs/REPAIR_20261024.md docs/PUBLISH_CHECKLIST.md docs/public-files.txt
+include docs/NETWORK_REPAIR_20261024.md
+include docs/LOGIC_REPAIR_20261025.md
 recursive-include app/knowledge_samples *.jsonl *.json
 exclude AGENTS.md .env
 prune learning

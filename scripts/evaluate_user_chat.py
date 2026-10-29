@@ -13,7 +13,7 @@ from app.model_api import ModelClient
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cases", type=Path, required=True)
+    parser.add_argument("--cases", type=Path, default=Path("evaluation/user_chat_cases.json"))
     parser.add_argument("--case", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--live", action="store_true", help="Explicitly allow the real model and public-source tools")

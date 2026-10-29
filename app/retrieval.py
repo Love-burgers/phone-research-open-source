@@ -44,60 +44,7 @@ def source_score(phone_name: str, need: str, title: str, snippet: str) -> int:
     return model_score + topic_score
 
 
-def _canonical(value: str) -> str:
-    value = unicodedata.normalize("NFKC", value).casefold().replace("+", "plus")
-    return "".join(char for char in value if char.isalnum())
 
-
-def _model_aliases(phone_name: str) -> tuple[str, ...]:
-    canonical = _canonical(phone_name)
-    aliases = {canonical}
-    # Search engines use both the Chinese and international Xiaomi brand names.
-    if canonical.startswith("小米"):
-        aliases.add("xiaomi" + canonical.removeprefix("小米"))
-    elif canonical.startswith("xiaomi"):
-        aliases.add("小米" + canonical.removeprefix("xiaomi"))
-    if canonical.startswith("红米"):
-        aliases.add("redmi"+canonical.removeprefix("红米"))
-    elif canonical.startswith("redmi"):
-        aliases.add("红米" + canonical.removeprefix("redmi"))
-    if canonical.startswith("realme"):
-        aliases.add("真我" + canonical.removeprefix("realme"))
-    elif canonical.startswith("真我"):
-        aliases.add("realme" + canonical.removeprefix("真我"))
-    return tuple(alias for alias in aliases if alias)
-
-
-def _model_mentions(phone_name: str, value: str) -> tuple[bool, bool]:
-    """Return (exact mention, longer variant mention) in normalized preview text."""
-    text = unicodedata.normalize("NFKC", value).casefold().replace("+", "plus")
-    exact = variant = False
-    for alias in _model_aliases(phone_name):
-        pattern = r"[\s\-_]*".join(re.escape(char) for char in alias)
-        for match in re.finditer(pattern, text):
-            before = text[match.start() - 1] if match.start() else ""
-            if before and before.isascii() and before.isalnum():
-                continue
-            tail = text[match.end():]
-            next_char = tail[:1]
-            next_word = tail.lstrip(" -_/、·").split(maxsplit=1)[0] if tail.strip(" -_/、·") else ""
-            is_variant = (
-                bool(next_char and next_char.isascii() and next_char.isalnum())
-                or bool(re.match(r"[a-z](?:\b|[\u4e00-\u9fff])", next_word))
-                or any(next_word.startswith(suffix) for suffix in ("pro", "max", "plus", "ultra", "mini", "air", "fe", "卫星通信版", "卫星版", "satellite"))
-            )
-            if is_variant:
-                variant = True
-            else:
-                exact = True
-    return exact, variant
-
-
-def exact_model_in_text(phone_name: str, value: str) -> bool:
-    return _model_mentions(phone_name, value)[0]
-
-
-def variant_only_title(phone_name: str, title: str) -> bool:
-    """Exclude previews titled only for a longer model variant, e.g. 15 Pro vs 15."""
-    exact, variant = _model_mentions(phone_name, title)
-    return variant and not exact
+# Re-export shared identities for existing callers.
+from .phone_identity import (identity_key as _canonical, model_aliases as _model_aliases,
+    model_mentions as _model_mentions, exact_model_in_text, variant_only_title)

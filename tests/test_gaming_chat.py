@@ -62,7 +62,7 @@ def test_local_spec_does_not_block_measured_review_supplement(tmp_path):
                                url='https://example.com/review', quote=phone.name + ' 2025年游戏测试：原神30分钟平均60帧，样机条件不能保证今天表现。',
                                checked_on='2026-10-11', published_on='2025-01-01', evidence_kind='review', source_type='page')]
     assistant = SelectionAssistant(agent_enabled=False, store=ChatStore(tmp_path / 'sessions.sqlite3'), source_loader=Reviews())
-    result = say(assistant, '预算6000，主要游戏性能，先看REDMI K80')
+    result = say(assistant, '预算6000，主要游戏性能，先看REDMI K80的原神帧率与发热实测')
     assert len(calls) == 1 and '游戏' in calls[0][1]
     reply = result.messages[-1]
     assert 'review' in {s.evidence_kind for s in reply.sources}

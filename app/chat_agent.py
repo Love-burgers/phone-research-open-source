@@ -12,15 +12,18 @@ from pydantic import BaseModel, ConfigDict, Field
 from .chat_schemas import ChatMessage, ChatSource, AnswerBlock
 from .agent_tools import TOOL_DEFINITIONS
 from .retrieval import exact_model_in_text, focus_aliases
-from .tool_loop import BudgetedJsonClient, build_tool_loop
-from .selection_requirements import discovery_needed, missing_evidence, local_only, card_matches, recommendation_gaps, topic_observations, numeric_requirement
+from .tool_loop import BudgetedJsonClient, build_tool_loop, PROJECT_LIMITS, project_limit_notice, ExecutionLimit
+from .selection_requirements import discovery_needed, missing_evidence, local_only, card_matches, recommendation_gaps, recommendation_notes, topic_observations, check_requirement
+from .source_retention import retained_sources
+from .evidence_registry import session_evidence, merge_sources, refresh_kinds, finish_refresh, missing_reply, evidence_gaps
 from .selection_catalog import budget_position, minimum_storage, storage_gb
 from .selection_catalog import eligible, variant_eligible
-from .phone_names import parse_phone_names, register_phone, normalized_name, checked_today
+from .phone_names import parse_phone_names, register_phone, checked_today
 from .model_schema import compact_schema
+from .phone_identity import identity_key as normalized_name, source_identity_matches, series_excluded
 from .selection_presentation import configuration_facts, quoted_price
 from .source_rules import official_phone_url
-from .selection_prices import select_offer, source_price_options
+from .selection_prices import select_offer, source_price_options, price_lookup_notes, historical_price_references
 from .conversation_context import recent_dialogue, focused_games, query_memory, evidence_excerpt
 from .config import get_settings
 
@@ -34,7 +37,7 @@ class ChatDecision(BaseModel):
     message: str = Field(default="", max_length=600)
     candidate_names: list[str] | None = Field(default=None, max_length=5)
     clarification_target: Literal["budget", "usage", "phone", "requirement", "other"] | None = None
-    blocks: list[AnswerBlock] | None = Field(default=None,max_length=5)
+    blocks: list[dict] | None = Field(default=None,max_length=5)
 
 
 def pending_page_links(actions, catalog, recommending):
@@ -54,6 +57,7 @@ def pending_page_links(actions, catalog, recommending):
             if not name or url in fetched:
                 continue
             phone = next((p for p in catalog.values() if normalized_name(p.name) == normalized_name(name)), None)
+            if phone and not source_identity_matches(phone.name,candidate.get('title',''),''):continue
             official = phone and official_phone_url(phone.brand, url)
             spec = bool(re.search(r"参数|规格|spec|param", candidate.get("title", "") + url, re.I))
             review = bool(re.search(r"评测|实测|article|review", candidate.get("title", "") + url, re.I))
@@ -97,7 +101,7 @@ class ChatAgentRun:
         # Discovered leads remain queryable in later turns even if they were not yet
         # suitable recommendations. Old below-tier defaults do not consume this turn.
         for phone in self.turn["session"].discovered_phones:
-            if (not self.locked_scope and phone.id not in self.alternative_ids and not self.turn.get("clarification") and eligible(self.catalog[phone.id], self.profile)
+            if (not self.locked_scope and phone.id not in self.alternative_ids and not self.turn.get("clarification") and self.phone_allowed(self.catalog[phone.id])
                 and (phone.price is None or not self.profile.budget_max or phone.price <= self.profile.budget_max)
                 and (self.profile.price_preference != "near_budget" or phone.price is None or not self.profile.budget_max or phone.price >= self.profile.budget_max * .8)
                 and phone.id not in self.scope):
@@ -106,8 +110,12 @@ class ChatAgentRun:
         self.requested_dimensions = focus_aliases(" ".join([*self.profile.priorities, *self.profile.games,
                                                        "屏幕" if self.profile.high_refresh_required else ""]))
 
-        self.refresh = bool(re.search(r"刷新|重新查|更新资料|最新资料|最新价格|今天.*价", self.turn["message"]))
+        self.refresh_kinds = refresh_kinds(self.turn["message"])
+        self.refresh = bool(self.refresh_kinds)
 
+
+    def phone_allowed(self,phone):
+        return eligible(phone,self.profile) and not series_excluded(phone.name,self.turn.get('scope_series',[]))
 
     def relevant_body(self, pid, sources):
         # Relevance admits a provisional comparison; it never proves a match.
@@ -150,24 +158,8 @@ class ChatAgentRun:
                                 for action in (message.agent_trace or {}).get('actions', [])]
         pending_history = [c for c in pending_page_links(self.history_actions, self.catalog, self.turn.get('recommendation_turn',False))
                            if any(c['phone_name'] == self.catalog[pid].name for pid in self.scope)]
-        previous = {}
-        if not self.refresh:
-            for message in reversed(self.turn["session"].messages):
-                if message.role != "assistant":
-                    continue
-                for source in message.sources:
-                    if source.phone_id in self.scope:
-                        previous.setdefault(source.id, source.model_copy(deep=True))
-            # Preserve the useful body/price before previews. The old global
-            # first-eight cap could discard a verified review behind snippets.
-            ranked = sorted(previous.values(), key=lambda s: (s.source_type == "snippet",
-                {"review": 0, "price": 1, "spec": 2}.get(s.evidence_kind, 3),
-                -sum(game in s.quote for game in self.focus_games)))
-            counts, previous = {}, {}
-            for source in ranked:
-                counts[source.phone_id] = counts.get(source.phone_id, 0) + 1
-                if counts[source.phone_id] <= 4 and len(previous) < 12:
-                    previous[source.id] = source
+        reused = session_evidence(self.turn,self.catalog,self.scope)
+        previous = reused['sources']
         conditions = self.turn["session"].profile.model_dump()
         if self.needs_discovery:
             conditions["candidate_ids"] = []
@@ -181,9 +173,13 @@ class ChatAgentRun:
                    "可复用来源": [{**s.model_dump(), "quote": evidence_excerpt(s.quote, 900 if s.evidence_kind == "review" else 350)}
                               for s in previous.values()],
                    "已有证据核对": {self.catalog[pid].name: card_matches(pid, self.profile, list(previous.values()))[0] for pid in self.scope}}
+        context['本轮刷新字段']=sorted(self.refresh_kinds)
+        context['本轮执行额度']={'工具总次数':self.limits.max_tool_calls,'模型总次数含最终回答':self.limits.max_model_calls,
+            '公开搜索次数':self.limits.max_search_calls,'网页读取次数':self.limits.max_fetch_calls}
         context["候选价位覆盖不足"] = self.needs_discovery
         context["本地有资料的机型"] = [self.catalog[pid].name for pid in self.scope if normalized_name(self.catalog[pid].name) in self.local_names]
         context["暂避上一批"] = [self.catalog[pid].name for pid in self.alternative_ids if pid in self.catalog]
+        context['本轮暂避系列']=self.turn.get('scope_series',[])
         context["必须核对"] = {"游戏": self.profile.games, "高刷": self.profile.high_refresh_required,
                               "推荐数量": self.profile.recommendation_count, "仅本地": self.offline_only,
                               "用户开启联网搜索": self.turn.get("search_mode") == "web" and not self.offline_only}
@@ -241,6 +237,10 @@ class ChatAgentRun:
         state['executed'].append(key);state['knowledge_calls']+=1
         hits=self.assistant.knowledge.discover(" ".join([args.query,*self.profile.priorities,*self.profile.games,*self.profile.requirements]))
         names=list(dict.fromkeys(h['phone_name'] for h in hits))
+        if self.turn.get('recommendation_turn'):
+            # Price records and useful configurations can have no lexical hit
+            # for a short homepage query. Inspect the bounded inventory too.
+            names=list(dict.fromkeys([*names,*(c.phone_name for c in self.assistant.knowledge.index.chunks)]))
         if self.locked_scope:
             names=[n for n in names if any(normalized_name(self.catalog[pid].name)==normalized_name(n) for pid in self.scope)]
         def price_rank(name):
@@ -249,16 +249,18 @@ class ChatAgentRun:
                 and c.evidence_kind=='price' and c.reference_price and (not self.profile.budget_max or c.reference_price<=self.profile.budget_max)
                 and (storage_gb(c.price_variant or '') or 0)>=minimum_storage(self.profile)]
             price=(max(offers) if self.profile.price_preference=='near_budget' else min(offers)) if offers else known
-            return (budget_position(price,self.profile),price or 100000) if self.profile.price_preference=='save_money' else (budget_position(price,self.profile),)
+            position=budget_position(price,self.profile)
+            rank={0:0,2:1,1:2,3:3}[position]
+            return (rank,price or 100000) if self.profile.price_preference=='save_money' else (rank,)
         if self.turn.get('recommendation_turn'):names.sort(key=price_rank)
-        returned=[];selected=[];pending=[]
+        returned=[];selected=[];pending=[]; screened_out=[]
         original_scope=set(self.scope)
         original_sources={sid:source.model_dump() for sid,source in state['sources'].items()}
         for candidate in names:
             mentions=parse_phone_names(candidate)
             if len(mentions)!=1:continue
             phone=register_phone(mentions[0],self.catalog)
-            if phone.id in self.alternative_ids or not eligible(phone,self.profile):continue
+            if phone.id in self.alternative_ids or not self.phone_allowed(phone):continue
             if phone.id not in self.catalog:
                 if len(self.turn['session'].discovered_phones)>=20:continue
                 self.catalog[phone.id]=phone
@@ -279,7 +281,7 @@ class ChatAgentRun:
                 review=next((h for h in pool if topic_observations(phone.id,topic,[source_from_hit(h)],self.profile.games)),None)
                 if review and all(h['chunk_id']!=review['chunk_id'] for h in related):related.append(review)
             for requirement in [*self.profile.requirements,*(['刷新率至少90Hz'] if self.profile.high_refresh_required else [])]:
-                found=next((h for h in pool if numeric_requirement(requirement,[source_from_hit(h)])),None)
+                found=next((h for h in pool if check_requirement(requirement,[source_from_hit(h)]).status!='unknown'),None)
                 if found and all(h['chunk_id']!=found['chunk_id'] for h in related):related.append(found)
             prices=[c for c in self.assistant.knowledge.index.chunks if normalized_name(c.phone_name)==normalized_name(candidate)
                     and c.evidence_kind=='price' and c.reference_price]
@@ -300,7 +302,10 @@ class ChatAgentRun:
                 phone.price_options=offers[:12]
                 self.catalog[phone.id]=phone
             phone=self.catalog[phone.id]
-            if not variant_eligible(phone,self.profile) or any('不符合' in label for label in card_matches(phone.id,self.profile,incoming)[0]):continue
+            if not variant_eligible(phone,self.profile) or any('不符合' in label for label in card_matches(phone.id,self.profile,incoming)[0]):
+                screened_out.append({'name':phone.name,'status':'unsatisfied',
+                    'reasons':recommendation_gaps(phone,self.profile,incoming)})
+                continue
             if phone.price and self.profile.budget_max and (phone.price>self.profile.budget_max or
                 self.profile.price_preference=='near_budget' and phone.price<self.profile.budget_max*.8):continue
             gaps=recommendation_gaps(phone,self.profile,incoming)
@@ -318,31 +323,33 @@ class ChatAgentRun:
                 if local_gaps:
                     row['local_archive_status']='已扫描该型号全部本地片段；这些缺口需新来源，重复换词不能补出未收录事实'
             if gaps:
-                if len(pending)<2:pending.append((phone,incoming,row))
+                if self.relevant_body(phone.id,incoming) and len(pending)<args.limit:pending.append((phone,incoming,row))
                 continue
             if not self.keep_local_candidate(state,phone,incoming):continue
             returned.extend(s.model_dump() for s in incoming)
             selected.append(row)
-            if len(selected)>=min(args.limit,max(self.profile.recommendation_count,2)):break
+            if len(selected)>=args.limit:break
         kept_pending=[]
         for phone,incoming,row in pending:
             if not self.keep_local_candidate(state,phone,incoming):continue
             kept_pending.append(row)
             returned.extend(s.model_dump() for s in incoming)
+        returned=[s for s in returned if s['id'] in state['sources']]
         return {'status':'ok' if selected or pending else 'empty','local_candidates':selected,
                 'pending_candidates':kept_pending,'sources':returned,
+                'screened_out':screened_out[:8], 'archive_coverage':self.assistant.knowledge.coverage(),
+                'coverage_note':'仅代表当前资料能确认的候选；缺价格或实测不是产品不符合，也不是全市场排序。',
                 'lookup_origin':'local','added_candidates':sum(pid not in original_scope for pid in self.scope),
-                'added_evidence':sum(original_sources.get(s['id'])!=s for s in returned)}
+                'added_evidence':sum(original_sources.get(s['id'])!=s for s in returned),
+                'fact_progress':sum(row['phone_id'] not in original_scope for row in selected)}
 
     def keep_local_candidate(self,state,phone,sources):
         if not any(p.id==phone.id for p in self.turn['session'].discovered_phones) and phone.id not in self.assistant.catalog:
             if len(self.turn['session'].discovered_phones)>=20:return False
             self.turn['session'].discovered_phones.append(phone)
         if phone.id not in self.scope:self.scope.append(phone.id)
-        for source in sources:
-            state['sources'][source.id]=source
-            state['allowed_urls'].add((phone.id,source.url))
-        self.assistant._remember_sources(self.turn,sources)
+        for offset in range(0,min(len(sources),8),4):
+            self.record_sources(state,phone.id,sources[offset:offset+4])
         return True
 
     def consider_phones(self, state, args):
@@ -353,7 +360,7 @@ class ChatAgentRun:
                 rejected.append({"name": candidate, "reason": "无法识别为已支持品牌的完整数字型号"})
                 continue
             phone = register_phone(mentions[0], self.catalog)
-            if phone.id in self.alternative_ids or not eligible(phone, self.profile):
+            if phone.id in self.alternative_ids or not self.phone_allowed(phone):
                 rejected.append({"name": candidate, "reason": "与当前品牌或排除条件冲突"})
                 continue
             if phone.id not in self.catalog:
@@ -362,6 +369,8 @@ class ChatAgentRun:
                 phone.note = "模型提出的未验证型号假设；存在、价格与用途证据均需查询正文。"
                 self.catalog[phone.id] = phone
                 self.turn["session"].discovered_phones.append(phone)
+            elif phone.id not in self.assistant.catalog and not any(p.id==phone.id for p in self.turn['session'].discovered_phones):
+                if len(self.turn['session'].discovered_phones)<20:self.turn['session'].discovered_phones.append(phone)
             if phone.id not in self.scope:
                 self.scope.append(phone.id)
                 hypotheses.append({"phone_name": phone.name, "status": "unverified_hypothesis",
@@ -396,7 +405,7 @@ class ChatAgentRun:
         for lead in leads[:10]:
             for mention in parse_phone_names(lead["title"] + " " + lead.get("snippet", "")):
                 phone = register_phone(mention, self.catalog)
-                if phone.id in self.alternative_ids or not eligible(phone, self.profile):
+                if phone.id in self.alternative_ids or not self.phone_allowed(phone):
                     continue
                 if phone.id not in self.catalog:
                     if len(self.turn["session"].discovered_phones) >= 20:
@@ -439,6 +448,11 @@ class ChatAgentRun:
         lookup_details = {}
         lookup_status = None
         if name == "search_phone_knowledge":
+            target=(phone_id,tuple(self.turn.get('task',{}).get('fields',[])),tuple(self.focus_games),tuple(self.turn.get('focus_topics',[])))
+            if target in state.get('scanned_local_targets',[]):
+                return {'status':'duplicate','fact_progress':0,'target_gaps':evidence_gaps(self.turn,phone,list(state['sources'].values())),
+                    'local_archive_gaps':state.get('local_archive_gaps',{}).get(phone_id,[]),
+                    'hint':'该型号本地档案已扫描；目标缺口没有收录，换相近词不会产生新事实。可自主换新来源或如实结束。'}
             state["knowledge_calls"] += 1
             hits = self.assistant.knowledge.as_tool().invoke({"phone_name": phone.name, "need": args.query})
             incoming = [ChatSource(id=f"{phone_id}:{hit['chunk_id']}", phone_id=phone_id,
@@ -456,12 +470,29 @@ class ChatAgentRun:
                     if configuration_facts(phone,self.turn.get('focus_topics') or self.profile.priorities,[companion]):
                         incoming=[companion,*incoming][:4]
                         break
+            archive=[ChatSource(id=f'{phone_id}:{c.chunk_id}',phone_id=phone_id,title=c.title,url=c.source_url,
+                quote=c.text,checked_on=c.checked_on or checked_today(),evidence_kind=c.evidence_kind,
+                market=c.market,reference_price=c.reference_price,price_variant=c.price_variant)
+                for c in self.assistant.knowledge.index.chunks if normalized_name(c.phone_name)==normalized_name(phone.name)]
+            if self.turn.get('recommendation_turn'):
+                companions=[]
+                for topic in self.profile.priorities:
+                    match=next((s for s in archive if configuration_facts(phone,[topic],[s]) or topic_observations(phone_id,topic,[s],self.profile.games)),None)
+                    if match and match.id not in {s.id for s in companions}:companions.append(match)
+                price=next((s for s in archive if any(o.price==phone.price and o.variant==phone.variant for o in source_price_options(s,phone.name))),None)
+                if price and price.id not in {s.id for s in companions}:companions.append(price)
+                incoming=list({s.id:s for s in [*companions,*incoming]}.values())[:4]
+            gaps=evidence_gaps(self.turn,phone,archive)
+            if gaps:
+                state.setdefault('scanned_local_targets',[]).append(target)
+                state.setdefault('local_archive_gaps',{})[phone_id]=gaps
         elif name == "web_search":
             if not exact_model_in_text(phone.name, args.query):
                 return {"status": "invalid_arguments", "error": "公开查询须含完整机型"}
             state["search_calls"] += 1
             options = {"backend": args.backend} if args.backend != "bing" else {}
             result = self.assistant.source_loader.search(phone, args.query, refresh=self.refresh, **options)
+            lookup_status = result.get('status') if isinstance(result,dict) else None
             lookup_origin = result.get("lookup_origin", "unknown") if isinstance(result, dict) else "unknown"
             search_feedback = result.get("search_feedback") if isinstance(result, dict) else None
             incoming = result.get("sources", []) if isinstance(result, dict) else result
@@ -492,51 +523,22 @@ class ChatAgentRun:
                         state["allowed_urls"].add(key)
             else:
                 incoming = self.assistant.source_loader.fetch(phone, args.url, args.focus or self.turn["query"], refresh=self.refresh)
-        returned, added = self.record_sources(state, phone_id, incoming)
+        if name in {'web_search','fetch_page'}:state.setdefault('attempted_phone_ids',set()).add(phone_id)
+        before_gaps=evidence_gaps(self.turn,phone,list(state['sources'].values()))
+        returned, added = self.record_sources(state, phone_id, incoming, fresh=name=="fetch_page")
+        after_gaps=evidence_gaps(self.turn,phone,list(state['sources'].values()))
 
         return {**self.candidate_state(state, phone_id), "status": lookup_status or ("ok" if returned or candidates else "empty"),
                 "sources": returned, "candidates": candidates[:6], "added_candidates": added_candidates,
-                "added_evidence": added, "lookup_origin": lookup_origin, "search_feedback": search_feedback,
+                "added_evidence": added,"fact_progress":len(set(before_gaps)-set(after_gaps)),"target_gaps":after_gaps, "lookup_origin": lookup_origin, "search_feedback": search_feedback,
                 **lookup_details,
                 **({'fetch_feedback':fetch_feedback} if fetch_feedback else {})}
 
-    def record_sources(self, state, phone_id, incoming):
-        returned, added = [], 0
-        for source in incoming[:4]:
-            if source.phone_id != phone_id:
-                continue
-            old = state["sources"].get(source.id)
-            if old is None:
-                old = next((s for s in state["sources"].values() if s.phone_id == phone_id and s.url == source.url
-                            and (s.source_type == "snippet" and source.source_type == "page"
-                                 or s.source_type == source.source_type == "page"
-                                 and s.evidence_kind == source.evidence_kind
-                                 and s.price_variant == source.price_variant)), None)
-            if old:
-                improved_page = (source.source_type == "page" and old.source_type == "page"
-                                 and source.checked_on >= old.checked_on and source.quote != old.quote
-                                 and (source.evidence_kind == old.evidence_kind or old.evidence_kind in {"spec", "unknown"}))
-                if old.source_type == "snippet" and source.source_type == "page" or improved_page:
-                    source = source.model_copy(update={"id": old.id})
-                    state["sources"][old.id] = source
-                    added += 1
-                else:
-                    source = old
-            else:
-                existing = [s for s in state["sources"].values() if s.phone_id == phone_id]
-                if len(existing) >= 8:
-                    preview = next((s for s in existing if s.source_type == "snippet"), None)
-                    if source.source_type == "snippet" or preview is None:
-                        continue
-                    # Preview volume must not prevent a newly verified body or
-                    # version-price record from entering the evidence registry.
-                    del state["sources"][preview.id]
-                state["sources"][source.id] = source
-                added += 1
-            state["allowed_urls"].add((phone_id, source.url))
-            returned.append(source.model_dump())
-        self.assistant._remember_sources(self.turn, list(state["sources"].values()))
-        return returned, added
+    def record_sources(self, state, phone_id, incoming, *, fresh=False):
+        result=merge_sources(state,phone_id,incoming[:4],self.catalog,self.profile,
+            focus_topics=self.turn.get('focus_topics',()),refresh=self.refresh_kinds,fresh=fresh)
+        self.assistant._remember_sources(self.turn,list(state['sources'].values()))
+        return result
 
     def candidate_state(self, state, phone_id):
         current = self.catalog[phone_id]
@@ -558,9 +560,15 @@ class ChatAgentRun:
 
         qualification=recommendation_gaps(current,self.profile,list(state['sources'].values()))
         return {"candidate_state": {"name": current.name, "price": current.price, "variant": current.variant,
+                            'target_gaps':evidence_gaps(self.turn,current,list(state['sources'].values())),
                             "qualification":'pending' if qualification else 'ready',"qualification_gaps":qualification,
+                            'recommendation_notes':recommendation_notes(current,self.profile,list(state['sources'].values())),
                             'local_archive_gaps':state.get('local_archive_gaps',{}).get(phone_id,[]),
+                            'requirement_checks':{r:{'status':c.status,'source_ids':list(c.source_ids),'urls':list(c.urls)}
+                                for r in self.profile.requirements
+                                for c in [check_requirement(r,[s for s in state['sources'].values() if s.phone_id==phone_id])]},
                             "configuration_facts": facts, "quoted_price": quoted_price(current, self.profile, list(state["sources"].values())),
+                            'price_lookup_notes':price_lookup_notes(current,list(state['sources'].values())),
                             "matches": matches, "remaining": remaining}}
 
 
@@ -586,6 +594,9 @@ class ChatAgentRun:
         if self.needs_discovery and not any(t in tools for t in ("discover_phones", "consider_phones", "search_local_phones")):
             return "还不能完成选购：旧候选没有覆盖用户价位。请用discover_phones搜索该价位，再核对候选；不要只确认预算。"
         if self.locked_scope:
+            gaps={self.catalog[pid].name:evidence_gaps(self.turn,self.catalog[pid],list(state['sources'].values())) for pid in self.scope}
+            if any(gaps.values()) and not state['search_calls'] and not state['fetch_calls']:
+                return '当前问题仍有缺口：'+json.dumps(gaps,ensure_ascii=False)+'。可自主补查公开来源，或在确无可用线索时说明本轮具体缺口后结束；不要用旧话题代替。'
             return None
         check_ids = self.turn["selected"]
         if decision.candidate_names is not None:
@@ -598,16 +609,16 @@ class ChatAgentRun:
             and check_ids and all(budget_position(self.catalog[pid].price,self.profile)==2 for pid in check_ids)):
             return '本轮只覆盖了明显低于预算价位的选择。保留有理由的省钱备选，但请用当前完整需求查找预算附近的候选；不足时说明价位覆盖缺口，不把整批低价款当作该预算档。'
         if decision.kind == "answer" and decision.candidate_names == []:
-            useful = [pid for pid in self.scope if eligible(self.catalog[pid], self.profile)
+            useful = [pid for pid in self.scope if self.phone_allowed(self.catalog[pid])
                 and not recommendation_gaps(self.catalog[pid],self.profile,list(state['sources'].values()))
-                and any("实测资料" in label for label in card_matches(pid, self.profile, list(state['sources'].values()))[0])]
+                and self.relevant_body(pid,list(state['sources'].values()))]
             if useful:
                 return "已有同时通过预算、硬条件和用途依据核对的机型，请依据已核实事实决定保留哪些；不必为了凑数量选择其他线索。"
         if (not self.profile.explicit_candidate_ids and not self.profile.focus_phone_id
             and len(check_ids) < self.profile.recommendation_count and state["tool_calls_used"] < self.limits.max_tool_calls
             and (not state["search_calls"] or not any(a.get("name") == "fetch_page" for a in state["actions"]))):
             return "用户需要多款备选，目前不足目标数量。请利用现有线索寻找其他候选并核对正文；若确实查不到，说明失败原因后结束，不能只承诺将查询。"
-        required = missing_evidence(self.profile, check_ids, list(state["sources"].values()))
+        required = [pid for pid in check_ids if evidence_gaps(self.turn,self.catalog[pid],list(state['sources'].values()))]
         if self.turn.get("recommendation_turn"):
             required = [pid for pid in required if
                 not configuration_facts(self.catalog[pid], self.profile.priorities, list(state["sources"].values()))
@@ -627,41 +638,61 @@ class ChatAgentRun:
 
     def finish(self, state, budget, charge):
         updated, events = dict(state), list(state["actions"])
+        finish_refresh(self.turn,state,attempted=state.get('attempted_phone_ids',set()))
         sources = list(state["sources"].values())
         self.assistant._remember_sources(self.turn, sources)
 
         decision = self.read_decision(state, updated, events, sources, budget, charge)
         self.select_candidates(decision, sources)
+        if self.turn.get('backfilled_candidate_ids'):
+            events.append({'action':'grounded_candidate_backfill','phone_ids':self.turn['backfilled_candidate_ids'],
+                'reason':'requested_count_not_met; same budget, scope, body and hard-gate checks'})
         collected_sources = sources
+        self.turn['background_sources']=[s for s in collected_sources if s.phone_id not in self.turn['selected'] and s.source_type!='snippet'][:4]
+        if self.turn.get('recommendation_turn'):
+            self.turn['qualification_rejections']={pid:gaps for pid in self.scope
+                if any(s.phone_id==pid and s.source_type!='snippet' for s in collected_sources)
+                if (gaps:=recommendation_gaps(self.catalog[pid],self.profile,collected_sources))}
+            self.turn['recommendation_gaps']=self.turn['qualification_rejections']
         sources = [s for s in sources if s.phone_id in self.turn["selected"]]
         if not sources and not self.profile.explicit_candidate_ids and not self.profile.focus_phone_id:
             self.profile.candidate_ids = []
             self.turn["selected"] = []
         self.assistant._remember_sources(self.turn, sources)
         reply = self.compose_reply(state, decision, sources, updated, events, budget, charge)
-        if not sources and any(s.source_type!='snippet' for s in collected_sources):
-            reply.content='已查到相关机型资料，但还没有核实到同时符合预算、硬条件和各用途的'+('其他备选' if self.alternative_ids else '机型')+'；这轮不凑推荐数量。'
+        if self.turn.get('recommendation_turn') and not sources and any(s.source_type!='snippet' for s in collected_sources):
+            gaps=list(dict.fromkeys(g for values in self.turn['qualification_rejections'].values() for g in values))
+            reply.content='已查到相关机型资料，但还没有核实到同时符合预算、硬条件和各用途的'+('其他备选' if self.alternative_ids else '机型')+'。'+('当前缺口或限制：'+'；'.join(gaps[:4])+'。' if gaps else '')
             reply.details=[d for d in reply.details if '当前检索没有相关资料' not in d]
-            reply.details.extend(self.catalog[pid].name+'：'+'；'.join(gaps)
+            reply.details.extend(self.catalog[pid].name+'：'+'；'.join([*gaps,*price_lookup_notes(self.catalog[pid],collected_sources)])
                 for pid,gaps in self.turn.get('qualification_rejections',{}).items())
         if state["stop_reason"] not in {"model_finished", "model_error"}:
-            reply.details.append("本轮资料查询已按执行边界停止，已保留查到的来源。")
+            reasons={'no_progress':'连续查询未增加可核验事实','model_call_limit':'模型调用次数达到上限','tool_call_limit':'工具调用次数达到上限','deadline':'达到查询时限','token_budget':'达到用量边界','context_limit':'达到上下文边界'}
+            used=(f"（本轮工具{state['tool_calls_used']}/{self.limits.max_tool_calls}次，模型{updated['model_calls']}/{self.limits.max_model_calls}次，公开搜索{state['search_calls']}/{self.limits.max_search_calls}次，网页读取{state['fetch_calls']}/{self.limits.max_fetch_calls}次）")
+            reply.details.append('本轮查询停止原因：'+reasons.get(state['stop_reason'],state['stop_reason'])+used+'；已保留查到的来源。')
         if self.turn.get("search_mode") == "web" and not self.offline_only and not state["search_calls"] and not state["fetch_calls"]:
             reply.details.append("本轮开启了联网搜索，但查询未执行完成；当前回答仍依据已有资料，原因见查询过程。")
         self.explain_public_lookup(reply, events, collected_sources)
         if not sources and state["search_calls"]:
             if not any(s.source_type!='snippet' for s in collected_sources):
-                reply.content = "暂时没核实到其他合适机型。" if self.alternative_ids else "这轮没核实到合适机型，查到的线索还不足以推荐。"
+                reply.content = missing_reply(self.turn)
             # Keep confirmed findings visible even when no recommendation passes
             # the current filters, rather than replacing all work with a template.
             body_sources = [s for s in collected_sources if s.source_type != "snippet"]
-            if body_sources:
+            if body_sources and self.turn.get('recommendation_turn'):
                 reply.details.append("查到的机型尚未通过当前条件核对，保留在来源详情中。")
             failures = [a for a in events if a.get("action") == "tool" and
-                        a.get("result", {}).get("status") in {"empty", "tool_error"}]
+                        a.get("result", {}).get("status") in {"empty", "blocked", "tool_error", "lookup_limit"}]
             if failures:
                 reply.details.append(f"{len(failures)}次查询无结果或失败，具体参数与结果见查询过程。")
-            if self.alternative_ids:
+            price_only=bool(self.turn.get('qualification_rejections')) and all(
+                all(re.search(r'价格|报价|版本价|促销|预算',gap) for gap in gaps)
+                for gaps in self.turn.get('qualification_rejections',{}).values())
+            if price_only:
+                self.turn['price_only_pending']=True
+                reply.followup='预算、品牌范围和用途已保留；目前缺的是版本报价，继续核价可以沿用现有条件。'
+                reply.suggestions=['保持条件，继续找预算内版本报价明确的机型']
+            elif self.alternative_ids:
                 reply.followup = ("你更想换品牌、拍照焦段，还是机身大小？可以直接说，我会保留已确定的预算。" if "拍照" in self.profile.priorities else
                                   "你最想换掉哪一点：品牌、手感，还是某项使用体验？已有预算和用途会继续保留。")
                 reply.suggestions = (["也想兼顾续航", "想要更轻一点"] if "拍照" in self.profile.priorities else
@@ -669,13 +700,14 @@ class ChatAgentRun:
         complete_usage = all(u and isinstance(u.get("total_tokens"), int) for u in updated["usage"])
         reply.agent_trace = {"engine": "langgraph-chat-agent", "stop_reason": state["stop_reason"],
             "prompt_version": PROMPT_VERSION,
-            "search_mode": "local" if self.offline_only else self.turn.get("search_mode", "auto"),
+            "search_mode": "local" if self.offline_only else self.turn.get("search_mode", "auto"),"task":self.turn.get('task'),
             "decision_kind": decision.kind if decision else "fallback", "nodes": [*state["nodes"], "answer"],
             "actions": events, "policy": self.limits.model_dump(), "metrics": {
                 "model_calls": updated["model_calls"], "tool_calls": state["tool_calls_used"],
                 "search_calls": state["search_calls"], "fetch_calls": state["fetch_calls"],
                 "knowledge_calls": state["knowledge_calls"], "model_usage": updated["usage"],
                 "network_calls": sum(a.get('result',{}).get('network_operations',int(a.get('result',{}).get('lookup_origin')=='network')) for a in events),
+                "public_http_requests":0 if self.offline_only or not state['search_calls'] and not state['fetch_calls'] else None,
                 "cache_hits": sum(a.get('result',{}).get('cache_operations',int(a.get('result',{}).get('lookup_origin')=='cache')) for a in events),
                 "context_compactions": sum(a.get("action") == "context_compaction" for a in events),
                 "total_tokens": sum(u["total_tokens"] for u in updated["usage"]) if complete_usage else None,
@@ -683,11 +715,22 @@ class ChatAgentRun:
         # Preserve useful lookup work even when a price or benchmark gap prevents
         # recommending the phone. It remains expandable evidence, not an answer.
         reply.sources = collected_sources
+        if self.turn.get('recommendation_turn') or self.turn.get('task',{}).get('kind') in {'price','overview'}:
+            reply.price_references=historical_price_references(self.catalog,collected_sources)
+            if reply.price_references and self.turn.get('price_only_pending') and not reply.blocks:
+                reply.content='当前价格尚未核实，先列出查到的历史价格供参考；日期、渠道和优惠条件如下。是否符合预算仍需以当前报价为准。'
+        if state['stop_reason'] in PROJECT_LIMITS:
+            reply.content=project_limit_notice(state['stop_reason'],performed=bool(state['tool_calls_used']))+(' 以下仅列此前已核对的记录。' if reply.blocks and not state['tool_calls_used'] else '')
+            reply.mode='资料模式'
+            reply.suggestions=[self.turn['message']]
+            reply.agent_trace['execution_status']={'state':'partial' if state['tool_calls_used'] else 'not_executed',
+                'scope':'project','reason':state['stop_reason']}
+        reply.details=list(dict.fromkeys(reply.details))
         return {"report": reply, "sources": collected_sources}
 
     def explain_public_lookup(self, reply, events, sources):
         searches = [a for a in events if a.get('action') == 'tool' and a.get('name') == 'web_search']
-        if not searches or not self.focus_games or not self.locked_scope:
+        if self.turn.get('task',{}).get('kind') in {'price','feature'} or not searches or not self.focus_games or not self.locked_scope:
             return
         if all(topic_observations(pid, '游戏', sources, self.focus_games) for pid in self.turn['selected']):
             return
@@ -710,6 +753,7 @@ class ChatAgentRun:
 
     def read_decision(self, state, updated, events, sources, budget, charge):
         decision = None
+        if state['stop_reason'] in PROJECT_LIMITS:return None
         if state["stop_reason"] == "model_finished":
             try:
                 decision = ChatDecision.model_validate_json(state["messages"][-1].content)
@@ -736,6 +780,8 @@ class ChatAgentRun:
                 decision = ChatDecision.model_validate(raw)
                 events.append({"action": "candidate_selection", "status": "ok", "names": decision.candidate_names})
             except Exception as error:
+                if isinstance(error,ExecutionLimit) and str(error) in PROJECT_LIMITS:
+                    state['stop_reason']=updated['stop_reason']=str(error)
                 logger.warning("candidate_selection_failed error_type=%s", type(error).__name__)
                 events.append({"action": "candidate_selection", "status": "unavailable", "error_type": type(error).__name__})
         return decision
@@ -749,7 +795,7 @@ class ChatAgentRun:
                 if len(matches) != 1:
                     continue
                 pid, phone = matches[0], self.catalog[matches[0]]
-                if pid in self.alternative_ids or not eligible(phone, self.profile) or not variant_eligible(phone, self.profile) or not any(s.phone_id == pid and s.source_type != "snippet" for s in sources):
+                if pid in self.alternative_ids or not self.phone_allowed(phone) or not variant_eligible(phone, self.profile) or not any(s.phone_id == pid and s.source_type != "snippet" for s in sources):
                     continue
                 if not self.relevant_body(pid, sources):
                     continue
@@ -771,6 +817,17 @@ class ChatAgentRun:
             self.profile.candidate_ids = []
             self.profile.focus_phone_id = None
             self.turn["selected"] = []
+        if self.turn.get('recommendation_turn') and not self.profile.explicit_candidate_ids and not self.profile.focus_phone_id:
+            additions=[]
+            for pid in self.scope:
+                if len(self.profile.candidate_ids)>=self.profile.recommendation_count:break
+                phone=self.catalog[pid]
+                if pid in self.profile.candidate_ids or pid in self.alternative_ids or not self.phone_allowed(phone) or not variant_eligible(phone,self.profile):continue
+                if not self.relevant_body(pid,sources) or recommendation_gaps(phone,self.profile,sources):continue
+                if self.profile.price_preference=='near_budget' and self.profile.budget_max and phone.price<self.profile.budget_max*.8:continue
+                self.profile.candidate_ids.append(pid);additions.append(pid)
+            if additions:self.turn['backfilled_candidate_ids']=additions
+            self.turn['selected']=list(self.profile.candidate_ids)
         if not self.profile.explicit_candidate_ids and self.profile.candidate_ids and self.turn.get('recommendation_turn'):
             self.profile.candidate_ids = [pid for pid in self.profile.candidate_ids if self.relevant_body(pid, sources)
                                           and not recommendation_gaps(self.catalog[pid],self.profile,sources)]
@@ -800,20 +857,31 @@ class ChatAgentRun:
         else:
             answer_turn = {**self.turn, "sources": sources, "model_failed": state["stop_reason"] == "model_error"}
             observer = BudgetedJsonClient(self.client, self.limits, updated, events, budget, charge)
+            if state['stop_reason'] in PROJECT_LIMITS:
+                class RecordedOnly:
+                    available=False
+                observer=RecordedOnly()
             if decision and decision.blocks:
                 class ExistingAnswer:
                     available=True
                     def complete_json(self,_messages):
-                        return {"blocks":[b.model_dump() for b in decision.blocks]}
+                        return {"blocks":decision.blocks}
                 observer=ExistingAnswer()
                 events.append({"action":"answer_reused_from_decision","additional_model_requests":0})
             reply = self.assistant.answer(answer_turn, model_client=observer)["reply"]
+            if answer_turn.get('execution_limit') in PROJECT_LIMITS:
+                state['stop_reason']=updated['stop_reason']=answer_turn['execution_limit']
+                events.append({'action':'answer','status':'skipped','reason':state['stop_reason']})
             if answer_turn.get("answer_draft") is not None:
                 events.append({"action": "answer_draft", "result": answer_turn["answer_draft"]})
             if answer_turn.get('citation_repairs'):
                 events.append({'action':'answer_citation_repair','repairs':answer_turn['citation_repairs']})
             if answer_turn.get('answer_repairs'):
                 events.append({'action':'answer_content_repair','repairs':answer_turn['answer_repairs']})
+            if answer_turn.get('answer_protocol_repairs'):
+                events.append({'action':'answer_protocol_repair','repairs':answer_turn['answer_protocol_repairs']})
+            if answer_turn.get('answer_rejections'):
+                events.append({'action':'answer_block_rejections','rejections':answer_turn['answer_rejections']})
             if answer_turn.get("answer_failure"):
                 events.append({"action": "answer_validation", "status": "error", **answer_turn["answer_failure"]})
         return reply
@@ -852,7 +920,7 @@ class ChatAgentRun:
         recent_tools = [a for a in state["actions"] if a.get("action") == "tool"][-4:]
         pending = [c for c in pending_page_links([*getattr(self,'history_actions',[]),*state['actions']],self.catalog,self.turn.get('recommendation_turn',False))
                    if any(c['phone_name'] == self.catalog[pid].name for pid in self.scope)]
-        summary = {"本轮": self.turn["message"], "条件": self.profile.model_dump(),
+        summary = {"本轮": self.turn["message"], "本轮日期": checked_today(), "条件": self.profile.model_dump(),
                    "最近对话": recent_dialogue(self.turn['session'].messages, characters=min(8000, get_settings().chat_history_characters)),
                    "本轮关注游戏": self.focus_games,
                    "已有查询反馈": query_memory(self.turn['session'].messages, {self.catalog[pid].name for pid in self.scope}, limit=2),

@@ -2,10 +2,11 @@
 import re
 
 from .source_rules import official_phone_url
-from .selection_prices import storage_gb, minimum_storage, source_price_options
+from .selection_prices import storage_gb, minimum_storage, source_price_options, price_records, dated_promotion
 
 from .topics import SPEC_PATTERNS
-from .evidence_rules import unsupported_parameters
+from .evidence_rules import unsupported_parameters, owned_fact_text
+from .phone_identity import owner_at, identity_key
 
 
 def presentation_copy(text, hide_test_gaps=True):
@@ -42,11 +43,11 @@ def presentation_copy(text, hide_test_gaps=True):
 
 def configuration_facts(phone, topics, sources, limit=3):
     """Return literal parameter spans, never turn them into measured outcomes."""
-    body = [s for s in sources if s.phone_id == phone.id and s.source_type != "snippet"]
+    body = [s.model_copy(update={'quote':owned_fact_text(s.quote)}) for s in sources if s.phone_id == phone.id and s.source_type != "snippet"]
     groups = []
     for topic in topics:
         found = []
-        ordered = sorted(body, key=lambda s: not official_phone_url(phone.brand, s.url))
+        ordered = sorted(body, key=lambda s: (not official_phone_url(phone.brand, s.url),-int(s.checked_on.replace('-',''))))
         for source in ordered:
             official = official_phone_url(phone.brand, source.url)
             if found and found[0][2] and not official:
@@ -54,17 +55,20 @@ def configuration_facts(phone, topics, sources, limit=3):
             for pattern in SPEC_PATTERNS.get(topic, []):
                 for match in re.finditer(pattern, source.quote, re.I):
                     value = match[0].strip()
-                    if unsupported_parameters(value,[source]):
+                    if owner_at(source.quote,match.start()+1,phone.name)!=identity_key(phone.name):continue
+                    before=source.quote[max(0,match.start()-10):match.start()]
+                    if re.search(r'(?:没有|未配备|不支持|并非|待核实|是否|据说)\s*$',before):continue
+                    if unsupported_parameters(value,[source]) or unsupported_parameters(value,body):
                         continue
                     if topic == '游戏' and re.fullmatch(r'A\d{2}(?:\s*Pro)?',value,re.I):
                         context=source.quote[max(0,match.start()-24):match.end()+24]
                         if not re.search(r'芯片|仿生|处理器|CPU|SoC|搭载',context,re.I):
                             continue
-                    if topic == '屏幕' and re.search(r'Hz',value,re.I):
-                        before=re.split(r'[。；，,/|]',source.quote[:match.start()])[-1]
+                    if topic in {'屏幕','游戏'} and re.search(r'Hz',value,re.I):
+                        before=re.split(r'[。；/|]',source.quote[:match.start()])[-1]
                         after=re.split(r'[。；，,/|]',source.quote[match.end():])[0]
-                        context=before[-30:]+value+after[:12]
-                        if re.search(r'触控|采样',context) or not re.search(r'屏幕|刷新率|显示',context):
+                        context=before[-64:]+value+after[:12]
+                        if re.search(r'触控|采样',context) or not re.search(r'屏幕|刷新率|显示|ProMotion',context,re.I):
                             continue
                     if re.match(r"(?:流媒体视频播放|视频播放|音频播放)", value):
                         if not official or source.evidence_kind != "spec":
@@ -107,15 +111,14 @@ def configuration_facts(phone, topics, sources, limit=3):
 def quoted_price(phone, profile, sources):
     """Keep official and other page prices distinct, including the exact version."""
     offers = []
-    for source in sources:
+    for source,option in price_records(sources):
         if source.phone_id != phone.id:
             continue
-        for option in source_price_options(source):
-            if (storage_gb(option.variant) or 0) < minimum_storage(profile):
-                continue
-            offers.append((not (official_phone_url(phone.brand, source.url) and source.market == "中国大陆"), option.price, option.variant, source))
+        if (storage_gb(option.variant) or 0) < minimum_storage(profile):continue
+        offers.append((not (official_phone_url(phone.brand, source.url) and source.market == "中国大陆"), option.price, option.variant, source))
     if not offers:
         return None
+    offers=[o for o in offers if not dated_promotion(o[3])] or offers
     official = [o for o in offers if not o[0] and o[3].market == "中国大陆"]
     pool = official or offers
     conflicting = {o[2] for o in pool if len({x[1] for x in pool if x[2] == o[2]}) > 1}
@@ -127,7 +130,9 @@ def quoted_price(phone, profile, sources):
     chosen = next((o for o in pool if o[2] == phone.variant and o[1] == phone.price), min(pool, key=lambda o: o[1]))
     other, price, variant, source = chosen
     label = ("页面参考价" if other else "官方建议零售价" if re.search('建议零售价',source.title+source.quote) else "官网标价")
-    text = f"{label}{variant} {price}元"
+    historical=source.refresh_status in {'pending','failed','not_attempted','not_permitted'}
+    text = (f"历史促销记录（{source.published_on}发布，优惠时效未确认）：" if dated_promotion(source) else
+        f"历史记录（{source.checked_on}核对，本轮未更新）：" if historical else '')+f"{label}{variant} {price}元"
     if profile.budget_max and price > profile.budget_max:
         text += f"（超预算{price-profile.budget_max}元）"
     return text, source.id
@@ -135,7 +140,7 @@ def quoted_price(phone, profile, sources):
 
 def configuration_block(phone, profile, sources):
     topics = list(profile.priorities) or ["拍照", "续航", "屏幕"]
-    facts = configuration_facts(phone, topics, sources)
+    facts = configuration_facts(phone, topics, sources,limit=min(6,max(3,2*len(topics))))
     price = quoted_price(phone, profile, sources)
     if not facts and not price:
         return None
@@ -146,6 +151,19 @@ def configuration_block(phone, profile, sources):
         parts.append("、".join(value for value, _ in facts))
         ids.extend(sid for _, sid in facts)
     return phone.name + "：" + "；".join(parts) + "。", list(dict.fromkeys(ids))[:8]
+
+
+def preliminary_assessment(phone,topics,sources):
+    """Transparent source-mode reasoning; no fabricated measured outcomes or tiers."""
+    parts=[]
+    for topic in topics:
+        if not configuration_facts(phone,[topic],sources):continue
+        if topic=='游戏':parts.append('配置判断：已有处理、图形或显示方面的依据，可列入游戏用途初筛备选；持续高负载仍受散热和游戏适配影响，具体帧率与温度待核实')
+        elif topic=='拍照':parts.append('配置判断：影像硬件提供了拍摄用途的选择依据，值得比较；夜景和运动主体的成片仍取决于处理算法与场景')
+        elif topic=='续航':parts.append('配置判断：电池或充电配置可作为续航优先的选购依据；实际使用时长仍取决于负载和能耗')
+        elif topic=='屏幕':parts.append('配置判断：显示规格可支持屏幕用途的初步比较；实际显示体验仍需结合使用环境')
+        elif topic=='轻便':parts.append('配置判断：尺寸或重量可用于便携性取舍；握持是否合适仍因人而异')
+    return '。'.join(parts[:2])+('。' if parts else '')
 
 
 def conversation_guidance(profile):

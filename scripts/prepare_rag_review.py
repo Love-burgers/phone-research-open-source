@@ -25,7 +25,9 @@ def check_answer(raw, sources):
     for block in draft.blocks:
         if any(eid not in by_id or by_id[eid]["phone_id"] != block.phone_id for eid in block.evidence_ids):
             raise ValueError("cross_phone_or_unknown_citation")
-    return draft.model_dump()
+        if any(eid not in by_id or by_id[eid]['phone_id']==block.phone_id for eid in block.background_ids):
+            raise ValueError('invalid_background_reference')
+    return draft.model_dump(exclude_defaults=True)
 
 
 def generate_answers(rows, output, client, limit=6):

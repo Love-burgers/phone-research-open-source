@@ -10,36 +10,7 @@ from .chat_schemas import Brand
 from .selection_catalog import CatalogPhone
 
 
-BRANDS = {
-    "iphone": ("Apple", "iPhone"), "苹果": ("Apple", "iPhone"),
-    "xiaomi": ("小米", "Xiaomi"), "小米": ("小米", "Xiaomi"),
-    "redmi": ("REDMI", "REDMI"), "红米": ("REDMI", "REDMI"),
-    "oneplus": ("一加", "一加"), "一加": ("一加", "一加"),
-    "华为": ("华为", "华为"), "huawei": ("华为", "华为"),
-    "荣耀": ("荣耀", "荣耀"), "honor": ("荣耀", "荣耀"),
-    "oppo": ("OPPO", "OPPO"), "vivo": ("vivo", "vivo"),
-    "iqoo": ("iQOO", "iQOO"), "realme": ("realme", "realme"), "真我": ("realme", "realme"),
-    "三星": ("三星", "三星"), "samsung": ("三星", "三星"),
-    "pixel": ("Google", "Pixel"), "谷歌": ("Google", "Pixel"),
-    "红魔": ("红魔", "红魔"), "redmagic": ("红魔", "红魔"),
-    "努比亚": ("努比亚", "努比亚"), "nubia": ("努比亚", "努比亚"),
-    "魅族": ("魅族", "魅族"), "meizu": ("魅族", "魅族"),
-    "索尼": ("索尼", "索尼"), "sony": ("索尼", "索尼"),
-    "华硕": ("华硕", "ROG"), "asus": ("华硕", "ROG"), "rog": ("华硕", "ROG"),
-    "摩托罗拉": ("摩托罗拉", "摩托罗拉"), "motorola": ("摩托罗拉", "摩托罗拉"),
-}
-PHONE_PATTERN = re.compile(
-    r"(?<![a-z0-9])(?P<brand>" + "|".join(BRANDS) + r")\s*"
-    r"(?P<family>mate|nova|pura|magic|note|reno|ace|neo|gt|phone|游戏手机|xperia|edge|razr|find\s*[nx]|[acnksvtyxpz])?\s*"
-    r"(?P<number>\d{1,3})(?:\s*(?P<letter>[a-z](?![a-z])))?"
-    r"(?P<suffix>(?:\s*(?:pro\s*max|promax|pro|ultra|plus|max|mini|fe|se|turbo|\+|标准版|至尊版|青春版))*)",
-    re.IGNORECASE,
-)
-BARE_REDMI = re.compile(r"(?<![a-z0-9])k\d{2,3}(?:\s*(?:pro|ultra|至尊版))*", re.IGNORECASE)
-
-
-def normalized_name(text):
-    return "".join(c for c in unicodedata.normalize("NFKC", text).casefold().replace("+", "plus") if c.isalnum())
+from .phone_identity import BRANDS, PHONE_PATTERN, BARE_REDMI, SUFFIX_PATTERN, normalized_name
 
 
 def checked_today():
@@ -66,7 +37,7 @@ def parse_phone_names(text: str) -> list[PhoneMention]:
         family = family.upper() if len(family) <= 2 else family.title()
         model = family + match["number"] + (match["letter"] or "").upper()
         raw = match["suffix"].strip().casefold()
-        suffix_words = re.findall(r"pro\s*max|promax|pro|ultra|plus|max|mini|fe|se|turbo|\+|至尊版|青春版", raw)
+        suffix_words = re.findall(SUFFIX_PATTERN, raw)
         suffix = " ".join("Pro Max" if word.replace(" ", "") == "promax" else word.title()
                           for word in suffix_words)
         name = f"{prefix} {model}" + (f" {suffix}" if suffix else "")

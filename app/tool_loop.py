@@ -4,6 +4,7 @@ from copy import deepcopy
 import json
 import logging
 from time import monotonic
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
@@ -26,6 +27,39 @@ class AgentPolicy(BaseModel):
 
 class ExecutionLimit(ValueError):
     """A configured execution boundary, distinct from a provider outage."""
+
+
+PROJECT_LIMITS={'daily_token_limit','daily_model_call_limit','daily_turn_limit','rate_limit'}
+
+
+def project_limit_notice(reason, *, performed=False):
+    label={'daily_token_limit':'本项目今日Token额度不足以预留下一次模型请求',
+        'daily_model_call_limit':'本项目今日模型请求次数已达上限',
+        'daily_turn_limit':'本项目今日对话次数已达上限','rate_limit':'本项目请求频率已达上限'}.get(reason)
+    if not label:return ''
+    return label+'，本轮资料查询'+('已中止' if performed else '未执行')+'；这不是网络失败或没有相关资料。已保留你的条件，可稍后重试。'
+
+
+def actionable_leads(result, call, seen):
+    """Credit observed, unread body targets, not arbitrary URL/count changes."""
+    def identity(url):
+        parsed=urlsplit(url)
+        query=urlencode([(k,v) for k,v in parse_qsl(parsed.query,keep_blank_values=True)
+                         if not k.lower().startswith('utm_') and k.lower() not in {'spm','from'}])
+        return urlunsplit((parsed.scheme.lower(),parsed.netloc.lower(),parsed.path,query,''))
+    if call['name']=='fetch_page':
+        urls=[call['args'].get('url'),result.get('requested_url'),result.get('resolved_url')]
+        urls += [s.get('url') for s in result.get('lookup_steps',[])]
+        seen.update(identity(u) for u in urls if isinstance(u,str) and u.startswith(('http://','https://')))
+    fresh=[]
+    for candidate in result.get('candidates',[]):
+        url=candidate.get('url')
+        if (not isinstance(url,str) or not url.startswith(('http://','https://'))
+            or candidate.get('status') not in {None,'body_unverified'}
+            or candidate.get('purpose')=='official_directory'):continue
+        key=identity(url)
+        if key not in seen:seen.add(key);fresh.append(url)
+    return fresh
 
 
 class BudgetedJsonClient:
@@ -124,6 +158,8 @@ def build_tool_loop(*, client, limits, schemas, initialize, execute, finish, clo
         updated = deepcopy(state)
         updated["nodes"] = [*state["nodes"], "tools"]
         batch_progress = False
+        fresh_leads=[]
+        seen=set(state.get('seen_body_leads',[]))
         for call in state["messages"][-1].tool_calls:
             started = clock()
             if updated["tool_calls_used"] >= limits.max_tool_calls:
@@ -137,15 +173,26 @@ def build_tool_loop(*, client, limits, schemas, initialize, execute, finish, clo
                 except Exception as error:
                     result = {"status": "tool_error", "error_type": type(error).__name__}
                     logger.warning("tool_failed tool=%s error_type=%s", call["name"], type(error).__name__)
+            leads=actionable_leads(result,call,seen)
+            fact=bool(result.get('fact_progress',bool(result.get('added_evidence',0) or result.get('added_candidates',0))))
+            result={**result,'new_body_leads':leads,'progress_kind':'fact' if fact else 'new_actionable_leads' if leads else 'none'}
+            fresh_leads.extend(leads)
             updated["messages"].append(ToolMessage(content=json.dumps(result, ensure_ascii=False),
                                                    tool_call_id=call["id"], name=call["name"]))
             updated["actions"].append({"action": "tool", "tool_call_id": call["id"], "name": call["name"],
                                        "arguments": call["args"], "result": result,
                                        "elapsed_seconds": round(clock() - started, 4)})
-            batch_progress = batch_progress or bool(result.get("added_evidence", 0) or result.get("added_candidates", 0))
+            batch_progress = batch_progress or fact
         # A model may query three candidates at once. Let it observe that batch
         # and choose recovery; three empty siblings are one failed decision.
-        updated["no_progress"] = 0 if batch_progress else state["no_progress"] + 1
+        # One lead credit per unresolved plateau. It lets the model observe the
+        # results and choose a body; endlessly changing links cannot renew it.
+        can_read=(updated['tool_calls_used']<limits.max_tool_calls and updated.get('fetch_calls',0)<limits.max_fetch_calls
+                  and updated['model_calls']<limits.max_model_calls-1)
+        lead_credit=bool(fresh_leads) and can_read and not state.get('lead_credit_used',False)
+        updated['lead_credit_used']=False if batch_progress else bool(state.get('lead_credit_used',False) or lead_credit)
+        updated['seen_body_leads']=list(seen)
+        updated["no_progress"] = 0 if batch_progress or lead_credit else state["no_progress"] + 1
         if updated["tool_calls_used"] >= limits.max_tool_calls:
             updated["stop_reason"] = "tool_call_limit"
         elif updated["no_progress"] >= limits.max_no_progress:

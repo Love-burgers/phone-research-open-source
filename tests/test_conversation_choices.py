@@ -37,7 +37,8 @@ def test_default_three_distinct_choices_keep_partial_alternative_and_one_block_e
     reply = session.messages[-1]
     assert len(reply.cards) == len(reply.blocks) == session.profile.recommendation_count == 3
     assert len({b.phone_id for b in reply.blocks}) == 3
-    assert '待补实测' in ' '.join(reply.cards[-1].matches)
+    assert any('续航：配置' in m and '6000mAh' in m for m in reply.cards[-1].matches)
+    assert not any(m.startswith('续航：实测') for m in reply.cards[-1].matches)
     assert '推荐这3款' in reply.content and '换一批' in reply.followup
     assert reply.agent_trace['metrics']['network_calls'] == 0
 

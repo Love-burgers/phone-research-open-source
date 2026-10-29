@@ -40,6 +40,10 @@ class Settings(BaseModel):
     chat_agent_enabled: bool = True
     chat_context_characters: int = Field(default=64000, ge=8000, le=128000)
     chat_turn_token_budget: int = Field(default=64000, ge=8000, le=128000)
+    chat_turn_tool_calls: int = Field(default=18, ge=1, le=18)
+    chat_turn_model_calls: int = Field(default=10, ge=2, le=12)
+    chat_turn_search_calls: int = Field(default=6, ge=0, le=10)
+    chat_turn_fetch_calls: int = Field(default=8, ge=0, le=12)
     chat_history_messages: int = Field(default=24, ge=4, le=60)
     chat_history_characters: int = Field(default=12000, ge=1400, le=24000)
     chat_storage_path: str = "runs/chat-sessions.sqlite3"

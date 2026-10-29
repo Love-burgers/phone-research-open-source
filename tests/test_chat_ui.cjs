@@ -12,6 +12,55 @@ function helpers(fetch) {
   return context;
 }
 
+test('project quota is visible as not executed or partially executed, not missing evidence',()=>{
+  const {executionNotice,chatModeText}=helpers();
+  for(const reason of ['daily_token_limit','daily_model_call_limit']){
+    const trace={stop_reason:reason,metrics:{tool_calls:0,network_calls:0}};
+    assert.match(executionNotice(trace),/本项目.*未执行/);
+    assert.match(chatModeText(null,'资料模式（模型暂不可用）',trace),/本项目.*未执行/);
+    trace.metrics.tool_calls=2;
+    assert.match(executionNotice(trace),/中途停止/);
+  }
+  assert.equal(executionNotice({stop_reason:'no_progress'}),'');
+  assert.match(html,/此栏显示当前候选/);
+});
+
+test('background references stay cited and have a distinct visible label',()=>{
+  const {evidenceGroups}=helpers();
+  const groups=evidenceGroups({blocks:[{evidence_ids:['own'],background_ids:['bg']}],sources:[
+    {id:'own',url:'https://example.com/device'},{id:'bg',url:'https://example.com/background'}]});
+  assert.equal(groups.cited.length,2);
+  assert.equal(groups.other.length,0);
+  assert.match(html,/link\(`背景/);
+});
+
+test('historical prices are shown directly with cited sources and explicit current-price uncertainty',()=>{
+  const {evidenceGroups}=helpers();
+  const result=evidenceGroups({blocks:[],price_references:[{name:'示例机型',evidence_ids:['old']}],sources:[{id:'old',url:'https://example.com/old-price'}]});
+  assert.equal(result.cited.length,1);
+  assert.equal(result.other.length,0);
+  assert.match(html,/历史价格参考（当前价格未核实）/);
+  assert.match(html,/el\('div',reference.text\)/);
+  assert.match(html,/价格来源/);
+});
+
+test('prices already stated in a phone answer are folded while missing prices stay visible',()=>{
+  const {priceReferenceGroups}=helpers();
+  const refs=[{phone_id:'x',text:'历史报价3999元'},{phone_id:'y',text:'历史报价2999元'}];
+  const grouped=priceReferenceGroups({blocks:[{phone_id:'x',text:'12GB+256GB页面价3999元，预算上限内。'},{phone_id:'y',text:'预算3000元，当前价格未核实。'}],price_references:refs});
+  assert.equal(grouped.folded.length,1);assert.equal(grouped.folded[0].phone_id,'x');
+  assert.equal(grouped.direct.length,1);assert.equal(grouped.direct[0].phone_id,'y');
+  assert.match(html,/其他版本与价格记录/);
+  assert.match(html,/当前成交价及优惠条件待确认/);
+});
+
+test('price reference deduplication accepts version-only amounts and retains legacy messages',()=>{
+  const {priceReferenceGroups}=helpers();
+  const result=priceReferenceGroups({blocks:[{phone_id:'x',text:'256GB：3999.00元。'}],price_references:[{phone_id:'x'}]});
+  assert.equal(result.direct.length,0);assert.equal(result.folded.length,1);
+  assert.equal(priceReferenceGroups({blocks:[]}).direct.length,0);
+});
+
 test('frontend and backend share the prose/details behavior contract',()=>{
   const {testGapCopy}=helpers();
   const cases=JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures/presentation_copy_cases.json'),'utf8'));
@@ -61,12 +110,16 @@ test('personal key validation never echoes input and save does not test the prov
   assert.match(submit,/location.protocol/);
 });
 
-test('network button explicitly selects local or public search in the request', () => {
+test('web mode selector preserves local auto web and legacy boolean mapping', () => {
   const {chatPayload}=helpers();
   assert.equal(chatPayload('也想兼顾拍照','a'.repeat(32),false).search_mode,'local');
   assert.equal(chatPayload('换一批',null,true).search_mode,'web');
   assert.equal(chatPayload('换一批',null,true).message,'换一批');
-  assert.match(html,/id="webSearch" aria-pressed="false"/);
+  for(const mode of ['local','auto','web']) assert.equal(chatPayload('继续',null,mode).search_mode,mode);
+  assert.equal(chatPayload('继续',null,'invalid').search_mode,'local');
+  assert.match(html,/id="webSearch" aria-label="公开网页查询模式"/);
+  assert.match(html,/<option value="auto">按需查询<\/option>/);
+  assert.match(html,/关闭网页查询仍可调用聊天模型/);
   assert.match(html,/id="mode" hidden/);
 });
 
@@ -119,9 +172,9 @@ test('source summary counts cited webpages separately from uncited lookup record
 test('mode distinguishes completed network work, cache reuse and no network', () => {
   const {chatModeText} = helpers();
   const status = metrics => chatModeText({}, 'AI对话', {engine:'langgraph-chat-agent', metrics});
-  assert.match(status({network_calls:3, cache_hits:1}), /本轮联网查询3次/);
+  assert.match(status({network_calls:3, cache_hits:1}), /本轮公开网页访问3次/);
   assert.match(status({network_calls:0, cache_hits:2}), /复用查询缓存/);
-  assert.match(status({network_calls:0, cache_hits:0}), /本轮未联网/);
+  assert.match(status({network_calls:0, cache_hits:0}), /本轮未访问公开网页/);
 });
 test('historical execution boundary is not shown as a provider outage', () => {
   const {chatModeText} = helpers();
@@ -166,6 +219,14 @@ test('sources identify body, snippet and knowledge with date and market', () => 
   assert.match(sourceTypeText({source_type:'snippet',checked_on:'2026-10-11',market:'地区未确认'}),/搜索摘要.*正文未核对.*2026-10-11.*地区未确认/);
   assert.match(sourceTypeText({source_type:'page',checked_on:'2026-10-11'}),/已抓取正文/);
   assert.match(sourceTypeText({source_type:'knowledge',checked_on:'2026-10-11'}),/本地知识库/);
-  assert.match(sourceTypeText({source_type:'knowledge',evidence_kind:'review',published_on:'2025-09-26',checked_on:'2026-10-11'}),/本地知识库.*实测评测.*2025-09-26发布.*2026-10-11核对/);
+  assert.match(sourceTypeText({source_type:'knowledge',evidence_kind:'review',published_on:'2025-09-26',checked_on:'2026-10-11'}),/本地知识库.*作者测试记录.*2025-09-26发布.*2026-10-11核对/);
   assert.match(sourceTypeText({source_type:'knowledge',evidence_kind:'price',checked_on:'2026-10-11',market:'中国大陆'}),/价格记录.*中国大陆/);
+});
+
+test('refresh metadata distinguishes historical price from current fetch',()=>{
+  const {sourceTypeText,chatModeText}=helpers();
+  const label=sourceTypeText({source_type:'page',evidence_kind:'price',checked_on:'2026-10-20',refresh_status:'failed'});
+  assert.match(label,/2026-10-20核对.*刷新失败.*历史记录/);
+  assert.match(sourceTypeText({source_type:'knowledge',checked_on:'2026-10-20',refresh_status:'superseded'}),/已有新版本.*历史记录/);
+  assert.match(chatModeText({},'资料模式',{engine:'shared-evidence-retrieval',metrics:{model_calls:0,network_calls:0,knowledge_calls:1}}),/未访问公开网页/);
 });

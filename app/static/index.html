@@ -44,7 +44,7 @@
       <div class="mode" id="mode" hidden>正在连接选机助手…</div>
       <div id="accessPanel" hidden><label>访问密钥 <input id="accessToken" type="password" autocomplete="off"></label><button id="accessLogin" type="button">连接</button><span class="small">仅保留在本次标签页，关闭后清除。</span></div>
       <div id="messages" aria-live="polite"></div>
-      <form id="chatForm"><div class="input-row"><textarea id="message" aria-label="你的选机需求" placeholder="例如：预算4000，主要拍照，也希望续航好" maxlength="1500" required></textarea><button class="send" id="send">发送</button></div><div class="search-options"><button type="button" class="search-toggle" id="webSearch" aria-pressed="false" title="开启后本轮查询公开资料；关闭只使用本地及已有资料">联网搜索：关</button><span id="searchHint">使用本地及已有资料</span></div><div class="hint">Enter 发送 · Shift + Enter 换行 · 当前浏览器会恢复上一次对话</div><div id="error" role="alert"></div></form>
+      <form id="chatForm"><div class="input-row"><textarea id="message" aria-label="你的选机需求" placeholder="例如：预算4000，主要拍照，也希望续航好" maxlength="1500" required></textarea><button class="send" id="send">发送</button></div><div class="search-options"><label for="webSearch">公开网页</label><select class="search-toggle" id="webSearch" aria-label="公开网页查询模式"><option value="local">关闭查询</option><option value="auto">按需查询</option><option value="web">本轮查询</option></select><span id="searchHint">使用本地及会话已有资料</span></div><div class="hint">关闭网页查询仍可调用聊天模型；选配的远程向量检索也可能联网。明确刷新价格可在输入中提出。</div><div class="hint">Enter 发送 · Shift + Enter 换行 · 当前浏览器会恢复上一次对话</div><div id="error" role="alert"></div></form>
     </section>
     <aside>
       <section class="panel"><h2>已记住的需求</h2><div id="profile"></div><div class="small">可以在对话里修改，未改的条件会保留。</div></section>
@@ -89,11 +89,17 @@
       if (actualMode === '资料模式（模型暂不可用）' && actions.some(a => a.action === 'report' && a.status === 'skipped') && !actions.some(a => ['decision','report'].includes(a.action) && a.status === 'error')) return '资料模式';
       return actualMode;
     }
+    function executionNotice(trace) {
+      const reason=trace?.stop_reason || trace?.execution_status?.reason;
+      const label={daily_token_limit:'本项目今日Token额度阻止了下一次请求',daily_model_call_limit:'本项目今日模型请求次数已达上限',daily_turn_limit:'本项目今日对话次数已达上限',rate_limit:'本项目请求频率已达上限'}[reason];
+      return label ? `${label} · ${trace?.metrics?.tool_calls || trace?.execution_status?.state==='partial' ? '资料查询中途停止' : '本轮资料查询未执行'}` : '';
+    }
     function chatModeText(health, actualMode, trace) {
+      if (executionNotice(trace)) return executionNotice(trace);
       actualMode = evidenceMode(actualMode, trace);
-      if (trace?.engine === 'langgraph-chat-agent' && trace.metrics?.network_calls != null) {
+      if (['langgraph-chat-agent','shared-evidence-retrieval'].includes(trace?.engine) && trace.metrics?.network_calls != null) {
         const m = trace.metrics;
-        const lookup = m.network_calls ? `本轮联网查询${m.network_calls}次` : m.cache_hits ? '本轮复用查询缓存' : m.knowledge_calls ? '本轮使用本地资料' : '本轮未联网';
+        const lookup = m.network_calls ? `本轮公开网页访问${m.network_calls}次` : m.cache_hits ? '本轮复用查询缓存' : m.knowledge_calls ? '本轮使用本地资料，未访问公开网页' : '本轮未访问公开网页';
         const status = actualMode === '资料模式（回答未通过核对）' ? '回答依据待核实' : actualMode === '资料模式（模型暂不可用）' ? '模型暂不可用，按资料回答' : actualMode === '资料模式' ? '资料参考' : '选机助手';
         return `${status} · ${lookup}`;
       }
@@ -108,9 +114,10 @@
     }
     function sourceTypeText(source) {
       const type = {knowledge:'本地知识库',page:'已抓取正文',snippet:'搜索摘要 · 正文未核对'}[source.source_type] || '本地知识库';
-      const kind = {review:'实测评测',price:'价格记录',spec:'配置资料'}[source.evidence_kind];
+      const kind = {review:'作者测试记录',price:'价格记录',spec:'配置资料'}[source.evidence_kind];
       const published = source.published_on ? `${source.published_on}发布` : null;
-      return [type,kind,published,`${source.checked_on}核对`,source.market || '地区未确认'].filter(Boolean).join(' · ');
+      const freshness={pending:'刷新尚未确认',failed:'刷新失败，保留历史记录',not_permitted:'未允许公开刷新',not_attempted:'刷新未执行',superseded:'同来源已有新版本，此条保留为历史记录'}[source.refresh_status];
+      return [type,kind,published,`${source.checked_on}核对`,source.market || '地区未确认',freshness].filter(Boolean).join(' · ');
     }
     function testGapCopy(text, enabled) {
       if (!enabled) return {text,notices:[]};
@@ -157,7 +164,7 @@
       return {text:kept.join('').trim().replace(/[；;]\s*$/,'。'), notices:notices.map(s=>s.trim())};
     }
     function evidenceGroups(message) {
-      const used = new Set((message.blocks || []).flatMap(block=>block.evidence_ids || []));
+      const used = new Set([...(message.blocks || []),...(message.price_references || [])].flatMap(block=>[...(block.evidence_ids || []),...(block.background_ids || [])]));
       const groups = new Map(), other = [];
       for (const source of message.sources || []) {
         if (!used.has(source.id)) {other.push(source);continue;}
@@ -166,20 +173,29 @@
       }
       return {cited:[...groups.values()],other};
     }
-    function chatPayload(message, sessionId, webEnabled) {
-      return {message,session_id:sessionId || null,search_mode:webEnabled ? 'web' : 'local'};
+    function priceReferenceGroups(message) {
+      const priced = new Set((message.blocks || []).filter(block=>
+        /(?:参考价|报价|售价|页面价|官网价|标价|到手价|版本价|价格)[：:\s]*(?:为|是|约|仅|低至)?[：:\s]*[￥¥]?\s*\d{3,5}(?:\.\d+)?\s*元|(?:\d{2,4}\s*GB|[12]\s*TB)[：:\s]+[￥¥]?\s*\d{3,5}(?:\.\d+)?\s*元/i.test(block.text)
+      ).map(block=>block.phone_id));
+      return {direct:(message.price_references || []).filter(ref=>!priced.has(ref.phone_id)),
+        folded:(message.price_references || []).filter(ref=>priced.has(ref.phone_id))};
+    }
+    function normalizeSearchMode(value) {
+      return value === true ? 'web' : ['local','auto','web'].includes(value) ? value : 'local';
+    }
+    function chatPayload(message, sessionId, searchMode) {
+      return {message,session_id:sessionId || null,search_mode:normalizeSearchMode(searchMode)};
     }
     // UI starts here. Text is always rendered with textContent, including model output.
     const $ = selector => document.querySelector(selector);
     let session = null, busy = false, latestHealth = null;
-    let webEnabled = false;
-    try {webEnabled = localStorage.getItem('phone-selection-web-search') === 'web';} catch {}
+    let searchMode = 'local';
+    try {searchMode = normalizeSearchMode(localStorage.getItem('phone-selection-web-search'));} catch {}
     function updateSearchOption() {
-      $('#webSearch').setAttribute('aria-pressed',String(webEnabled));
-      $('#webSearch').textContent = `联网搜索：${webEnabled ? '开' : '关'}`;
-      $('#searchHint').textContent = webEnabled ? '本轮查询公开资料' : '使用本地及已有资料';
+      $('#webSearch').value=searchMode;
+      $('#searchHint').textContent = {local:'使用本地及会话已有资料',auto:'证据有缺口时由助手决定补查',web:'本轮至少尝试一次公开查询；不等于强制刷新'}[searchMode];
     }
-    $('#webSearch').addEventListener('click',()=>{if(busy)return;webEnabled=!webEnabled;try{localStorage.setItem('phone-selection-web-search',webEnabled?'web':'local');}catch{}updateSearchOption();});
+    $('#webSearch').addEventListener('change',()=>{if(busy)return;searchMode=normalizeSearchMode($('#webSearch').value);try{localStorage.setItem('phone-selection-web-search',searchMode);}catch{}updateSearchOption();});
     updateSearchOption();
     function updateMode() {
       const latest = [...(session?.messages || [])].reverse().find(m => m.role === 'assistant');
@@ -203,11 +219,16 @@
       $('#profile').replaceChildren();
       const names = new Map(messages.flatMap(message => (message.cards || []).map(card => [card.id,card.name])));
       const rows = [['预算',profile.budget_unlimited ? '不限' : profile.budget_max ? (profile.price_preference === 'near_budget' ? `重点看 ${Math.floor(profile.budget_max*.8)}–${profile.budget_max}元` : `≤ ${profile.budget_max}元`) : '待确认'],['用途',(profile.priorities || []).join('、') || '待确认'],['具体要求',(profile.requirements || []).join('；') || '未限定'],['游戏',(profile.games || []).join('、') || '未指定'],['屏幕要求',profile.high_refresh_required ? '高刷新率' : '未限定'],['品牌',(profile.preferred_brands || []).join('、') || '不限'],['排除品牌',(profile.excluded_brands || []).join('、') || '无'],['排除机型',(profile.excluded_phones || []).map(id => names.get(id) || id).join('、') || '无']];
+      if(profile.answer_requirements?.length) rows.push(['资料与回答要求',profile.answer_requirements.join('、')]);
+      rows.find(row=>row[0]==='品牌')[0]=profile.brand_scope==='prefer' ? '品牌偏好' : '品牌限定';
+      if(profile.excluded_series?.length) rows.push(['排除系列',profile.excluded_series.map(key=>key.split('|').filter(Boolean).join(' ')+'系列').join('、')]);
       for (const [name,value] of rows) {if (!['预算','用途'].includes(name) && ['未限定','未指定','不限','无'].includes(value)) continue;const row = el('div',undefined,'profile-row');row.append(el('span',name),el('span',value));$('#profile').append(row);}
+      for (const phone of session?.discovered_phones || []) if(phone.note?.includes('派生报价未通过机型归属')) $('#profile').append(el('p',`${phone.name}：此前派生报价已撤回；历史回答保留为原始记录。`));
       const latest = [...messages].reverse().find(m => m.role === 'assistant');
       const cards = (latest?.cards || []).filter(card => (profile.candidate_ids || []).includes(card.id));
       $('#candidates').replaceChildren();
-      if (!cards.length) $('#candidates').append(el('p',profile.budget_max ? '尚无已核对的候选，已保留你的选机条件。' : '告诉我预算和用途，或指定想了解的机型。'));
+      if (!cards.length) $('#candidates').append(el('p',executionNotice(latest?.agent_trace) || (profile.budget_max ? '尚无已核对的当前候选，已保留你的选机条件。' : '告诉我预算和用途，或指定想了解的机型。')));
+      if (!cards.length && messages.some(m=>m.cards?.length)) $('#candidates').append(el('p','此栏显示当前候选；此前展示的机型仍保留在对应的历史回答中。'));
       for (const [index,card] of cards.entries()) {
         const node = el('div',undefined,'card');node.append(el('strong',`${index+1}. ${card.name}`),el('div',card.price ? `参考价 ¥${card.price}` : '待核价候选','price'));
         const hasConfiguration = card.reason?.startsWith('配置：');
@@ -231,13 +252,26 @@
         const bubble = el('div',message.content,'bubble');
         const sources = new Map((message.sources || []).map(source => [source.id,source]));
         const priceNotices = [];
+        const priceReferences=priceReferenceGroups(message);
         for (const block of message.blocks || []) {
           const name = (message.cards || []).find(card => card.id === block.phone_id)?.name || '机型资料';
           const text = block.text.startsWith(name + '：') || block.text.startsWith(name + ':') ? block.text.slice(name.length + 1).trim() : block.text;
           const copy = recommendationCopy(text, Boolean(message.followup));
           priceNotices.push(...copy.notices.map(notice=>name+'：'+notice));
           const fact = el('div',undefined,'fact');fact.append(el('strong',name),el('div',copy.text));
-          const refs = el('div',undefined,'refs');for (const [index,id] of block.evidence_ids.entries()) {const source = sources.get(id);if (source) refs.append(link(`来源${index+1}`,source.url));}fact.append(refs);bubble.append(fact);
+          const priceRecord=priceReferences.folded.find(ref=>ref.phone_id===block.phone_id);
+          if(priceRecord){const source=(priceRecord.evidence_ids || []).map(id=>sources.get(id)).find(Boolean);fact.append(el('div',`参考报价${source?.checked_on ? ' · '+source.checked_on+'核对' : ''}；当前成交价及优惠条件待确认。`,'refs'));}
+          const refs = el('div',undefined,'refs');for (const [index,id] of block.evidence_ids.entries()) {const source = sources.get(id);if (source) refs.append(link(`来源${index+1}`,source.url));}for(const [index,id] of (block.background_ids || []).entries()){const source=sources.get(id);if(source) refs.append(link(`背景${index+1}`,source.url));}fact.append(refs);bubble.append(fact);
+        }
+        for(const [references,folded] of [[priceReferences.direct,false],[priceReferences.folded,true]]) {
+          if(!references.length)continue;
+          const section=el(folded ? 'details' : 'section',undefined,'price-references');
+          section.append(el(folded ? 'summary' : 'strong',folded ? '其他版本与价格记录' : '历史价格参考（当前价格未核实）'));
+          for(const reference of references){
+            const fact=el('div',undefined,'fact');fact.append(el('strong',reference.name),el('div',reference.text));
+            const refs=el('div',undefined,'refs');for(const [index,id] of (reference.evidence_ids || []).entries()){const source=sources.get(id);if(source) refs.append(link(`价格来源${index+1}`,source.url));}fact.append(refs);section.append(fact);
+          }
+          bubble.append(section);
         }
         if (message.followup) bubble.append(el('p',message.followup,'conversation-guide'));
         const detailItems = [...new Set([...(message.details || []),...priceNotices])];
@@ -252,16 +286,20 @@
         if (message.role === 'assistant') {
           if (message.agent_trace) {
             const trace = message.agent_trace, details = el('details');
-            details.append(el('summary', `查询与用量 · 模型${trace.metrics?.model_calls ?? '未记录'}次 · 联网${trace.metrics?.network_calls ?? '未记录'}次`));
+            details.append(el('summary', `查询与用量 · 模型${trace.metrics?.model_calls ?? '未记录'}次 · 公开网页${trace.metrics?.network_calls ?? '未记录'}次`));
             details.append(el('p',chatModeText(null,message.mode,trace)));
-            details.append(el('p',`模型请求 ${trace.metrics?.model_calls ?? '未记录'} 次；联网工具 ${trace.metrics?.network_calls ?? '未记录'} 次；复用缓存 ${trace.metrics?.cache_hits || 0} 次。资料条数与请求次数分别统计。`));
+            details.append(el('p',`模型请求 ${trace.metrics?.model_calls ?? '未记录'} 次；公开查询操作 ${trace.metrics?.network_calls ?? '未记录'} 次；复用缓存 ${trace.metrics?.cache_hits ?? '未记录'} 次。资料条数、工具操作和底层HTTP次数分别统计。`));
+            details.append(el('p',`底层公开HTTP请求：${trace.metrics?.public_http_requests ?? '未完整观测'}。网页查询权限不控制聊天模型或选配的远程Embedding。`));
             const tools = {search_local_phones:'按需求检索本地候选',consider_phones:'提出待验证型号',discover_phones:'按价位寻找新机型',search_phone_knowledge:'查询本地资料',web_search:'搜索公开资料',fetch_page:'核对网页正文'};
-            const statuses = {ok:'找到资料',navigation_only:'仅找到目录链接，未取得对应正文',redirect_only:'已解析跳转目标，正文待核对',redirect_loop:'跳转形成循环，已停止读取',redirect_limit:'达到跳转次数边界，正文未核对',lookup_limit:'达到本轮查询额度',empty:'没有找到资料',duplicate:'跳过重复请求',tool_error:'查询失败',invalid_scope:'查询范围未通过检查',invalid_arguments:'参数未通过检查',invalid_url:'链接未通过检查',tool_call_limit:'达到调用上限'};
+            const statuses = {ok:'找到资料',blocked:'页面访问受阻，未取得正文',navigation_only:'仅找到目录链接，未取得对应正文',redirect_only:'已解析跳转目标，正文待核对',redirect_loop:'跳转形成循环，已停止读取',redirect_limit:'达到跳转次数边界，正文未核对',lookup_limit:'达到本轮查询额度',empty:'本次未取得对应资料',duplicate:'跳过重复请求',tool_error:'查询失败',invalid_scope:'查询范围未通过检查',invalid_arguments:'参数未通过检查',invalid_url:'链接未通过检查',tool_call_limit:'达到调用上限'};
             for (const event of trace.actions || []) {
               if (event.action === 'reuse_sources') details.append(el('p', `沿用本会话的${event.source_ids.length}条资料。`));
-              if (event.action === 'tool') details.append(el('p', `${tools[event.name] || '资料工具'}：${statuses[event.result?.status] || '已处理'}。`));
+              if (event.action === 'tool' || event.action === 'public_lookup') {
+                details.append(el('p', `${tools[event.name] || '资料工具'}：${statuses[event.result?.status || event.status] || '已处理'}。`));
+                if(event.result?.fetch_feedback?.hint) details.append(el('p',event.result.fetch_feedback.hint));
+              }
             }
-            const outcome = trace.decision_kind === 'clarify' ? '已提出澄清问题' : trace.decision_kind === 'acknowledge' ? '已确认你的条件或回复' : trace.stop_reason === 'model_finished' ? '助手已结束本轮查询' : '已按执行边界结束查询';
+            const outcome = executionNotice(trace) || (trace.engine === 'shared-evidence-retrieval' ? '本轮资料检索与合并已完成' : trace.decision_kind === 'clarify' ? '已提出澄清问题' : trace.decision_kind === 'acknowledge' ? '已确认你的条件或回复' : trace.stop_reason === 'model_finished' ? '助手已结束本轮查询' : '已按执行边界结束查询');
             details.append(el('p', outcome));
             const raw = el('details');raw.append(el('summary','查看详细调用记录'));
             const record = el('pre',JSON.stringify(trace,null,2));record.style.whiteSpace='pre-wrap';record.style.overflowWrap='anywhere';raw.append(record);details.append(raw);bubble.append(details);
@@ -277,7 +315,7 @@
     $('#chatForm').addEventListener('submit', async event => {
       event.preventDefault();if (busy) return;const message = $('#message').value.trim();if (!message) return;
       setBusy(true);$('#error').textContent = '';
-      try {session = await chatRequest('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(chatPayload(message,session?.session_id,webEnabled))});remember(session.session_id);$('#message').value = '';render();void refreshHealth();}
+      try {session = await chatRequest('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(chatPayload(message,session?.session_id,searchMode))});remember(session.session_id);$('#message').value = '';render();void refreshHealth();}
       catch (error) {$('#error').textContent = error.message;} finally {setBusy(false);$('#message').focus();}
     });
     $('#message').addEventListener('keydown',event => {if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {event.preventDefault();$('#chatForm').requestSubmit();}});

@@ -128,4 +128,4 @@ def test_local_tool_does_not_fill_up_with_cheap_models_before_budget_tier(tmp_pa
     result=app.turn(ChatRequest(message=text,search_mode='local'))
     returned=next(a['result']['local_candidates'] for a in result.messages[-1].agent_trace['actions'] if a.get('name')=='search_local_phones')
     assert [c['price'] for c in returned][:2]==[5299,5799]
-    assert len(returned)==3 and returned[-1]['budget_role']=='省钱备选'
+    assert len(returned)==4 and returned[-1]['budget_role']=='省钱备选'

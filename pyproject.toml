@@ -41,7 +41,7 @@ py-modules = ["main"]
 
 [tool.setuptools.package-data]
 app = ["static/*.html"]
-"app.knowledge_samples" = ["selection_index.json", "selection_catalog.json", "public_source_directory.jsonl"]
+"app.knowledge_samples" = ["selection_index.json", "selection_catalog.json", "public_source_directory.jsonl", "coverage_additions_20261024.jsonl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

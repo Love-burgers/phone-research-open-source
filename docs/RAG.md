@@ -1,55 +1,46 @@
-# 手机资料知识库 RAG
+# 资料检索与 RAG
 
-项目中的知识库负责保存资料片段与来源，检索负责找相关片段，RAG 将片段交给模型生成带引用的报告。LangChain 提供模型、切分器、Retriever 和工具接口，LangGraph 决定知识库之后是否需要补搜。设计依据见 [LangChain 检索说明](https://docs.langchain.com/oss/python/deepagents/retrieval) 与 [LangGraph 概览](https://docs.langchain.com/oss/python/langgraph/overview)。
+知识库保存带机型、网址、日期和证据类型的片段；Agent检索相关片段，决定是否继续查公开正文，回答使用同型号来源。检索排名和引用校验各有边界，不能单独证明结论正确。
 
-## 导入资料
+## 默认与可选配置
 
-输入为 UTF-8 JSONL，每行一份文档，四个字段必填：phone_name、title、source_url、text。phone_name 必须和研究时的明确机型对应；每条文档只归属一款手机。跨机型文章需先分别摘录，不能把另一款的参数混入当前机型。
+| 配置 | 行为 |
+|---|---|
+| 默认外部索引路径为空 | 随包selection_index.json，102款/478片段，无向量BM25；不下载模型、不请求Embedding |
+| CHAT_KNOWLEDGE_INDEX_PATH指向外部BM25索引 | 使用该文件内容，不自动同步随包补录 |
+| 外部向量索引及EMBEDDING_PROVIDER=local | 正式接入的本地BGE路径，需事先准备缓存，支持vector/hybrid |
+| 外部向量索引及远程Embedding配置 | 查询请求独立服务，资料发送和消费按部署配置控制 |
 
-~~~json
-{"phone_name":"具体手机型号","title":"来源标题与版本","source_url":"https://example.com/review","text":"这里替换为已核对来源的规格、评测或说明书正文。"}
-~~~
+`CHAT_RETRIEVAL_METHOD` 可选bm25/vector/hybrid，未填沿用索引自身method。只配置向量提供方不会改变随包BM25路径。39款/301片段和98款/455片段是历史外部快照，当前默认以 [资料覆盖说明](CORPUS.md) 为准。
 
-当前导入的是文本 JSONL；PDF、网页或参数表应先提取并核对文本再导入，没有自动 PDF 解析或全站爬取。保留原链接，在正文注明地区版本、日期、测试条件和冲突；代码不会认证来源权威性或自动核验事实。内置 app/knowledge_samples/phones.jsonl 全是虚构 Phone A/B 教学资料。
+## 导入与检索
 
-~~~powershell
-.\.venv\Scripts\python.exe -m app.knowledge_cli build --input my-phones.jsonl --output runs/my-knowledge.json
-.\.venv\Scripts\python.exe -m app.knowledge_cli query --index runs/my-knowledge.json --phone "具体手机型号" --need "重视续航"
-~~~
+JSONL每行一条KnowledgeDocument，至少包含phone_name、title、source_url、text；真实资料还应填写checked_on、published_on（若能确认）、market、evidence_kind；版本价需reference_price与price_variant。先核对完整型号、市场、版本和测试条件。虚构Phone A/B仅为测试语料。
 
-导入通过 LangChain Document 与 RecursiveCharacterTextSplitter 生成约600字符片段、80字符重叠，保留原来源和稳定的 document_id、chunk_id。重复来源的相同片段只保存一次。输入上限2 MiB、单条正文20000字符、索引最多1024个片段和20 MiB；这是适合本地小语料的边界，超出时拒绝，不自动截断。
+```powershell
+.\.venv\Scripts\python.exe -m app.knowledge_cli build --input my-reviewed-phones.jsonl --output runs/my-knowledge-new.json
+.\.venv\Scripts\python.exe -m app.knowledge_cli query --index runs/my-knowledge-new.json --phone "完整机型" --need "重视续航"
+```
 
-默认 BM25 是本地关键词检索，中文使用二字词组、英文使用单词，并扩展已有关注点别名。先按明确机型过滤，再取最多4个有正相关分数的片段；没有相关词就返回空。Phone A 不会匹配 Phone A Pro。分数不是答案置信度，也没有跨型号别名归一化。
+LangChain将正文分成约600字符、80字符重叠的片段，保留稳定document_id/chunk_id，相同来源相同片段去重。输入上限2MiB、单条正文20000字符；索引最多1024片段、20MiB，超出拒绝。没有自动PDF解析或全站爬取。
 
-## 向量检索
+BM25使用中文二字词组、英文单词和有限主题别名。完整型号先过滤，至多返回四个正相关片段；无相关词返回空。跨机型发现先按型号分散，再核对预算和条件，避免同款多片段挤掉其他型号。价格与评测覆盖仍不均匀，缺资料不是产品不符合。
 
-本机当前配置启用本地BGE中文向量与BM25混合检索：39款、301片段（271参数、28版本价、2评测），来自保留的官方资料及已取得的官方正文。索引为runs/chat-knowledge-live-20261022/index-vector.json，原始历史索引保持原样。运行模型BAAI/bge-small-zh-v1.5的本地ONNX缓存，向量构建与查询不调用收费接口。需安装可选依赖`pip install -e ".[local]"`并事先准备模型缓存；服务以local_files_only加载，不自动下载。设置EMBEDDING_PROVIDER=local、EMBEDDING_LOCAL_CACHE_DIR、EMBEDDING_MODEL、CHAT_KNOWLEDGE_INDEX_PATH及CHAT_RETRIEVAL_METHOD=hybrid。没有这些配置时仍使用随包BM25。当前本地余弦门槛0.30是有限探针校准值，不能代表所有场景的准确率。
+## 向量与运行时增量
 
-Agent可跨机型检索，也可按完整型号检索。联网取得的官方正文经型号、地区、证据类型和版本价格字段检查后增量写入本地索引，保留导入历史，重复片段不重建向量；搜索摘要和未审核第三方评测不自动吸收。当前索引上限1024片段。资料以参数为主，向量库无法代替缺失的实测；详见[实际运行与限制](../evaluation/SEMANTIC_COST_20261022.md)。
+向量路径使用持久化向量、LangChain InMemoryVectorStore和余弦相似度，混合检索用RRF。默认最低相似度0.35，可用 `CHAT_VECTOR_MIN_SCORE` 调整，不是语义正确率。见 [Embedding配置](EMBEDDING.md)。
 
-在 .env 或环境变量设置 EMBEDDING_API_KEY、EMBEDDING_BASE_URL、EMBEDDING_MODEL，使用兼容 Embeddings API 的独立服务。DeepSeek 聊天接口不自动提供 Embedding；不要直接把聊天模型名称填写成向量模型。
+只有显式配置本地Embedding、加载可写外部索引时，取得的官方参数和明确版本价才可能通过准入后增量入库。保留导入历史，重复片段不重建；摘要和第三方评测不自动写共享索引。随包BM25默认不自动吸收联网结果；本次评测摘要是逐项核对后的有限补录。
 
-~~~powershell
-.\.venv\Scripts\python.exe -m app.knowledge_cli build --input my-phones.jsonl --output runs/my-vectors.json --method vector
-.\.venv\Scripts\python.exe -m app.knowledge_cli query --index runs/my-vectors.json --phone "具体手机型号" --need "电量能维持多久" --allow-embedding
-~~~
+每款最多八条工作证据，按本轮价格、硬条件、用途覆盖、正文类型和日期淘汰低价值材料。不同价格/相反属性保留冲突，同页正文更新复用编号；历史回答保留自身来源快照，不把被替换编号改绑其他URL，轨迹记录替换事件。
 
-使用远端Embedding配置时，构建将资料发送给服务，查询发送问题；本地提供方则只在本机计算。向量与片段一起保存为验证后的JSON，查询加载时不重新请求文档向量。模型与提供方签名必须和构建时一致；更换模型、地区版本或资料需构建新索引。
+## 检查与访问边界
 
-检索使用 LangChain InMemoryVectorStore 与余弦相似度，默认门槛0.35；这个门槛是启发式值，需要根据实际模型、语料和无相关资料样本调整。单元测试用假向量验证接线；另已运行真实本地BGE的20款/240片段/60题对照，独立人工盲审待完成，见[新检索对照](../evaluation/RAG_BENCHMARK_RESULTS.md)。
+```powershell
+.\.venv\Scripts\python.exe -m scripts.evaluate_knowledge --output runs/knowledge-evaluation-new.json
+.\.venv\Scripts\python.exe -m scripts.audit_chat_corpus --index app/knowledge_samples/selection_index.json --output runs/corpus-audit-new.json
+```
 
-## 对话中的检索
+离线回归验证召回、无资料返回、型号隔离及接线；语料审计检查结构与覆盖，不核验全部事实或实时可购性。历史实验与成本记录未公开，不链接私有材料，不将测试数量或检索指标当作推荐准确率。
 
-默认使用随包BM25。设置CHAT_KNOWLEDGE_INDEX_PATH加载本工程的外部索引，CHAT_RETRIEVAL_METHOD选择bm25/vector/hybrid；向量服务配置变化后需重建。主页Agent选择何时检索或补搜，不按旧对比研究流程运行。
-
-检索工具返回text、完整机型、chunk_id与source_url，回答节点按同机型检查引用。旧对比研究的命令和图调度器已移到独立comparison_app工程，不是本对话项目入口。
-
-## 检查效果
-
-~~~powershell
-.\.venv\Scripts\python.exe -m scripts.evaluate_knowledge --output runs/knowledge-evaluation.json
-~~~
-
-固定虚构语料检查召回率、精确率、机型隔离和无资料返回，独立验证不依赖分析模型。真实资料还需检查：问法变化是否漏召回、跨机型内容是否混入、片段是否保留测试条件、结论是否受到引用支持。引用编号检查只证明编号归属，不证明语义支持；关键词覆盖也不能证明事实正确。
-
-私人文档与索引放在 runs/ 等忽略目录，不纳入安装包。报告包含实际召回片段，分享前检查内容。网页尚无登录与访问控制，本地知识库不是多用户权限隔离系统。
+当前已有共享访问密钥、远程无密钥拒绝及请求/消费限制。共享密钥不是多用户登录，知识库与SQLite也不是多用户权限隔离系统。私人文档、会话、索引和人工评审不随公开清单发布。
